@@ -1,0 +1,51 @@
+{
+  "name": "valhalla-route-id",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": { "node": ">=22.22.2" },
+  "scripts": {
+    "dev": "vite",
+    "build": "pnpm run typecheck && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:worker": "vitest run --config vitest.workers.config.ts",
+    "dev:worker": "wrangler dev",
+    "deploy": "pnpm run build && wrangler deploy",
+    "build:native": "bash scripts/build.sh native",
+    "build:wasm": "bash scripts/build.sh wasm",
+    "build:sdk": "pnpm --filter valhalla-browser build && pnpm --filter valhalla-server build",
+    "data:osm": "bash scripts/data.sh",
+    "data:region": "bash scripts/data.sh --region",
+    "data:etags": "node scripts/dataset-etags.js",
+    "serve:dataset": "node tools/serve-dataset.mjs"
+  },
+  "dependencies": {
+    "@fontsource/archivo-black": "^5",
+    "@fontsource/space-grotesk": "^5",
+    "maplibre-gl": "6.11.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "valhalla-browser": "workspace:*",
+    "zustand": "5.0.15"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "^4",
+    "@tailwindcss/vite": "4.3.3",
+    "@testing-library/react": "^16",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5",
+    "jsdom": "^27",
+    "tailwindcss": "4.3.3",
+    "typescript": "^5.9",
+    "valhalla-server": "workspace:*",
+    "vite": "8.3.1",
+    "vitest": "5.0.2",
+    "wrangler": "4.141.0"
+  }
+}
