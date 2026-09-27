@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.wrangler/
+.dev.vars
+
+# Local data inputs (large, never committed)
+build/inputs/
+public/datasets/
+
+# Editor / OS
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# Env
+.env
+.env.local
