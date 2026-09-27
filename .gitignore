@@ -9,6 +9,13 @@ public/wasm/
 .wrangler/
 .dev.vars
 
+# Vendored package doc copies (build-package.js copies these from the repo root into
+# packages/*/; they are generated build output, never edits). These rules do not
+# affect the tracked packages/valhalla-server/README.md, which is upstream's own.
+packages/*/README.md
+packages/*/LICENSE
+packages/*/NOTICE.md
+
 # Local data inputs (large, never committed)
 build/inputs/
 public/datasets/
