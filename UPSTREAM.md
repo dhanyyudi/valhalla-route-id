@@ -29,3 +29,18 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
 
 Never take a new upstream release without rebuilding the Indonesia dataset with
 its pinned Valhalla revision.
+
+## WASM runtime artifacts
+
+The pinned runtime is published as the GitHub release **`wasm-runtime-v1`**
+(https://github.com/dhanyyudi/valhalla-route-id/releases/tag/wasm-runtime-v1).
+CI downloads it before packaging the SDK, because CI has no Docker.
+
+| artifact | bytes | sha256 |
+| --- | --- | --- |
+| `valhalla.wasm` | 9,861,835 | `2097e57700e51bc703da06ecd74fb2edf656b58173e51488a3cdc9ffe0cc0db1` |
+| `valhalla.js` | 116,584 | `fabe0f4830ab5bbde355c9ebc749b4b5dc83bffb05930080bf6f3d74961fa2bb` |
+
+`native/runtime-lock.json` records the same hashes. A rebuild that changes them must update
+both the lockfile and this release (`gh release upload wasm-runtime-v1 ... --clobber`), and
+re-run the verification corpus before publishing graph data built with the new runtime.
