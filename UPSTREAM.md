@@ -19,6 +19,16 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
 3. `native/runtime.cpp` + `native/CMakeLists.txt` — three added exports:
    `vb_isochrone`, `vb_optimized_route`, `vb_matrix`.
 4. `packages/valhalla-core/src/engine.ts` and both adapters — matching methods.
+5. `tools/smoke/route-smoke.test.ts` — two behaviours of the pinned fixture that the plan's cases
+   could not assert as written. The Liechtenstein release offers no alternative path for the
+   Vaduz→Malbun smoke leg, so native omits `alternates` from the route response instead of
+   returning an empty array; that case asserts the documented
+   `alternates === undefined || Array.isArray(alternates)` fallback and still requires a non-empty
+   primary trip. The same release declares only `auto`, `bicycle`, `pedestrian` and `truck`
+   (vendored `scripts/prepare-data.py`), so it refuses `motor_scooter` with `UNSUPPORTED_COSTING`
+   before native routing; the suite pins that refusal and proves distinct-profile routing with
+   `bicycle` instead. Both were observed against `liechtenstein-2015-v1-d769cb7c11b2936d`, never
+   worked around.
 
 ## Rebasing on a newer upstream release
 
