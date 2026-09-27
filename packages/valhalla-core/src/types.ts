@@ -6,7 +6,27 @@ export interface Coordinates {
   lon: number;
 }
 /** Validated road travel profiles. Transit and combined journeys are not supported. */
-export type Costing = 'auto' | 'bicycle' | 'pedestrian' | 'truck';
+export type Costing = 'auto' | 'motorcycle' | 'motor_scooter' | 'truck' | 'bicycle' | 'pedestrian';
+
+/** Per-profile option allowlists, copied from the pinned Valhalla sources (src/sif/*.cc). */
+export const COSTING_OPTIONS: Record<Costing, readonly string[]> = {
+  auto: ['use_highways', 'use_tolls', 'use_distance', 'top_speed', 'alley_factor', 'restriction_probability'],
+  motorcycle: ['use_highways', 'use_tolls', 'use_trails', 'top_speed'],
+  motor_scooter: ['use_primary', 'use_hills', 'top_speed'],
+  truck: ['height', 'width', 'length', 'weight', 'axle_load', 'axle_count', 'hazmat', 'use_highways', 'use_tolls',
+    'use_truck_route', 'low_class_penalty', 'low_class_factor', 'hgv_no_access_penalty', 'top_speed'],
+  bicycle: ['bicycle_type', 'cycling_speed', 'use_roads', 'use_hills', 'avoid_bad_surfaces', 'bss_return_cost', 'bss_return_penalty'],
+  pedestrian: ['walking_speed', 'use_hills', 'walkway_factor', 'sidewalk_factor', 'alley_factor', 'driveway_factor',
+    'step_penalty', 'max_distance', 'max_grade', 'max_hiking_difficulty', 'mode_factor', 'type'],
+};
+
+/** Options accepted by every profile (valhalla/sif/dynamiccost.h base options). */
+export const BASE_COSTING_OPTIONS: readonly string[] = [
+  'use_ferry', 'use_rail_ferry', 'ferry_cost', 'rail_ferry_cost', 'service_penalty', 'service_factor', 'use_tracks',
+  'use_living_streets', 'use_lit', 'closure_factor', 'speed_penalty_factor', 'maneuver_penalty', 'gate_cost',
+  'gate_penalty', 'private_access_penalty', 'toll_booth_cost', 'toll_booth_penalty', 'country_crossing_cost',
+  'country_crossing_penalty', 'alley_penalty', 'dest_only_penalty', 'shortest',
+];
 /** Bicycle settings; omitted values use the pinned Valhalla defaults. */
 export interface BicycleCostingOptions {
   /** Bicycle type; defaults to hybrid. Type also determines the default cycling speed. */
@@ -92,13 +112,32 @@ export type RouteProfile =
         pedestrian?: never;
       };
     };
+/** Request fields upstream did not expose; every one is optional. */
+export interface ExtendedRouteFields {
+  locations?: Array<Coordinates & {
+    type?: 'break' | 'through' | 'break_through' | 'via';
+    preferred_side?: 'same' | 'opposite' | 'either';
+    heading?: number;
+    heading_tolerance?: number;
+    date_time?: string;
+    name?: string;
+    city?: string;
+  }>;
+  date_time?: { type: 1 | 2; value: string };
+  alternates?: number;
+  exclude_polygons?: string[];
+  exclude_locations?: Coordinates[];
+  avoid_edges?: number[];
+  shape_format?: 'polyline6' | 'polyline5' | 'geojson' | 'no_shape';
+  directions_options?: { language?: string; units?: string };
+}
 /**
  * Exactly two locations with a supported road profile and optional matching settings.
  * @remarks Supply either origin/destination or an ordered locations tuple.
  * The SDK fixes kilometers, English instructions, a 30 m correlation radius,
  * and minimum reachability 0. Additional native request options are not exposed.
  */
-export type RouteRequest = RouteProfile & (
+export type RouteRequest = RouteProfile & ExtendedRouteFields & (
   | {
       /** Start coordinate inside the dataset coverage. */
       origin: Coordinates;

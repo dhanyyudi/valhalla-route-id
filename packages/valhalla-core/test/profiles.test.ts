@@ -1,0 +1,66 @@
+// @vitest-environment node
+import { describe, expect, it } from 'vitest';
+import { SUPPORTED_COSTINGS, validateRequest } from '../src/profiles.js';
+
+const at = (lat: number, lon: number) => ({ lat, lon });
+
+describe('validateRequest', () => {
+  it('accepts the six supported costings', () => {
+    expect([...SUPPORTED_COSTINGS]).toEqual(['auto', 'motorcycle', 'motor_scooter', 'truck', 'bicycle', 'pedestrian']);
+    for (const costing of SUPPORTED_COSTINGS) {
+      expect(validateRequest({ locations: [at(-6.2, 106.8), at(-6.9, 107.6)], costing }).costing).toBe(costing);
+    }
+  });
+
+  it('accepts more than two locations and normalizes each', () => {
+    const result = validateRequest({ locations: [at(-6.2, 106.8), at(-6.5, 107.0), at(-6.9, 107.6)], costing: 'auto' });
+    expect(result.locations).toHaveLength(3);
+    expect(result.locations[0]).toMatchObject({ radius: 30, minimum_reachability: 0 });
+  });
+
+  it('preserves driver costing options that upstream used to reject', () => {
+    const result = validateRequest({
+      locations: [at(-6.2, 106.8), at(-6.9, 107.6)],
+      costing: 'auto',
+      costing_options: { auto: { use_highways: 0, use_tolls: 0, top_speed: 60 } },
+    });
+    expect(result.costing_options).toEqual({ auto: { use_highways: 0, use_tolls: 0, top_speed: 60 } });
+  });
+
+  it('preserves date_time, alternates, shape_format and directions_options', () => {
+    const result = validateRequest({
+      locations: [at(-6.2, 106.8), at(-6.9, 107.6)],
+      costing: 'motorcycle',
+      date_time: { type: 1, value: '2026-09-28T07:00' },
+      alternates: 2,
+      shape_format: 'geojson',
+      directions_options: { language: 'id-ID' },
+      exclude_polygons: ['-6.3,106.7,-6.25,106.75'],
+    });
+    expect(result.date_time).toEqual({ type: 1, value: '2026-09-28T07:00' });
+    expect(result.alternates).toBe(2);
+    expect(result.shape_format).toBe('geojson');
+    expect(result.directions_options).toEqual({ language: 'id-ID' });
+    expect(result.exclude_polygons).toEqual(['-6.3,106.7,-6.25,106.75']);
+    expect(result.language).toBe('id-ID');
+  });
+
+  it('rejects unknown costing options for a profile', () => {
+    expect(() => validateRequest({
+      locations: [at(-6.2, 106.8), at(-6.9, 107.6)],
+      costing: 'motor_scooter',
+      costing_options: { motor_scooter: { use_highways: 0 } },
+    })).toThrowError(/Unsupported option/);
+  });
+
+  it('rejects fewer than two locations and non-finite coordinates', () => {
+    expect(() => validateRequest({ locations: [at(-6.2, 106.8)] })).toThrowError(/At least two locations/);
+    expect(() => validateRequest({ locations: [at(Number.NaN, 106.8), at(-6.9, 107.6)] })).toThrowError(/finite/);
+  });
+
+  it('records unknown top-level fields as warnings instead of dropping them', () => {
+    const result = validateRequest({ locations: [at(-6.2, 106.8), at(-6.9, 107.6)], invented_option: true });
+    expect(result.invented_option).toBe(true);
+    expect(result.__warnings).toEqual(['invented_option']);
+  });
+});

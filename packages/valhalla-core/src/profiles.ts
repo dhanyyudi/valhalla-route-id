@@ -1,57 +1,58 @@
 import { RoutingError } from './errors.js';
-import type { Coordinates, Costing, CostingOptions } from './types.js';
-import type { NormalizedRequest } from './protocol.js';
+import { BASE_COSTING_OPTIONS, COSTING_OPTIONS } from './types.js';
+import type { Costing } from './types.js';
+import type { NormalizedLocation, NormalizedRequest } from './protocol.js';
 
-export const SUPPORTED_COSTINGS: readonly Costing[] = ['auto', 'bicycle', 'pedestrian', 'truck'];
-const ranges: Record<string, Record<string, readonly [number, number]>> = {
-  bicycle: { cycling_speed: [5, 60], use_roads: [0, 1] },
-  pedestrian: { walking_speed: [0.5, 25] },
-  truck: { height: [0, 10], width: [0, 10], length: [0, 50], weight: [0, 100], axle_load: [0, 40] },
-};
+export const SUPPORTED_COSTINGS: readonly Costing[] = ['auto', 'motorcycle', 'motor_scooter', 'truck', 'bicycle', 'pedestrian'];
+
+const PASSTHROUGH = new Set([
+  'date_time', 'alternates', 'exclude_polygons', 'exclude_locations', 'avoid_edges', 'shape_format',
+  'directions_options', 'linear_references', 'id', 'costing_options',
+]);
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const invalid = (message: string): never => { throw new RoutingError('INVALID_REQUEST', message); };
 
-/**
- * Validate and copy a two-location road request without loading WASM.
- * @param request - Unknown input to validate as a {@link RouteRequest}.
- * @returns Native request with explicit correlation, units and language defaults; omitted profile options remain unset.
- * @throws {@link RoutingError} with `INVALID_REQUEST` for invalid settings or `UNSUPPORTED_COSTING` for an unknown profile.
- */
 export function validateRequest(request: unknown): NormalizedRequest {
   if (!object(request)) return invalid('A route request is required.');
-  const costing = request.costing === undefined ? 'auto' : request.costing;
-  if (!SUPPORTED_COSTINGS.includes(costing as Costing)) throw new RoutingError('UNSUPPORTED_COSTING', 'Supported profiles: auto, bicycle, pedestrian, truck.');
-  const locations = request.locations ?? [request.origin, request.destination];
-  if (!Array.isArray(locations) || locations.length !== 2) return invalid('Exactly two locations are required.');
-  for (const point of locations) {
+  const costing = (request.costing === undefined ? 'auto' : request.costing) as Costing;
+  if (!SUPPORTED_COSTINGS.includes(costing)) throw new RoutingError('UNSUPPORTED_COSTING', `Supported profiles: ${SUPPORTED_COSTINGS.join(', ')}.`);
+
+  const raw = request.locations ?? [request.origin, request.destination];
+  if (!Array.isArray(raw) || raw.length < 2) return invalid('At least two locations are required.');
+  const locations = raw.map((point): NormalizedLocation => {
     if (!object(point) || typeof point.lat !== 'number' || !Number.isFinite(point.lat) || Math.abs(point.lat) > 90 ||
         typeof point.lon !== 'number' || !Number.isFinite(point.lon) || Math.abs(point.lon) > 180)
       return invalid('Coordinates must be finite latitude/longitude values.');
-  }
-  const result: NormalizedRequest = {
-    locations: (locations as Coordinates[]).map(({ lat, lon }) => ({ lat, lon, radius: 30, minimum_reachability: 0 })),
-    costing: costing as Costing, units: 'kilometers', language: 'en-US',
-  };
+    return { ...point, lat: point.lat, lon: point.lon, radius: 30, minimum_reachability: 0 } as NormalizedLocation;
+  });
+
+  const allowed = new Set([...COSTING_OPTIONS[costing], ...BASE_COSTING_OPTIONS]);
+  const mirrored: Record<string, Record<string, unknown>> = {};
   if (request.costing_options !== undefined) {
-    const groups = request.costing_options;
-    if (costing === 'auto' || !object(groups) || Object.keys(groups).length !== 1 || !Object.hasOwn(groups, costing as string))
-      return invalid('costing_options must contain only the selected profile. Driving options are not exposed.');
-    const options = groups[costing as string];
+    if (!object(request.costing_options) || Object.keys(request.costing_options).length !== 1 || !Object.hasOwn(request.costing_options, costing))
+      return invalid(`costing_options must contain only "${costing}".`);
+    const options = request.costing_options[costing];
     if (!object(options)) return invalid('Profile options must be an object.');
-    const copied: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(options)) {
-      const range = Object.hasOwn(ranges[costing as string], key) ? ranges[costing as string][key] : undefined;
-      if (range) {
-        if (typeof value !== 'number' || !Number.isFinite(value) || value < range[0] || value > range[1])
-          return invalid(`${costing}.${key} must be a finite number from ${range[0]} to ${range[1]}.`);
-      } else if (costing === 'bicycle' && key === 'bicycle_type') {
-        if (!['road', 'cross', 'hybrid', 'mountain'].includes(value as string)) return invalid('Invalid bicycle_type.');
-      } else if (costing === 'truck' && key === 'hazmat') {
-        if (typeof value !== 'boolean') return invalid('truck.hazmat must be a boolean.');
-      } else return invalid(`Unsupported option: ${costing}.${key}.`);
-      copied[key] = value;
+      if (!allowed.has(key)) return invalid(`Unsupported option: ${costing}.${key}.`);
+      const type = typeof value;
+      if (type !== 'number' && type !== 'boolean' && type !== 'string') return invalid(`${costing}.${key} must be a number, boolean or string.`);
+      if (type === 'number' && !Number.isFinite(value as number)) return invalid(`${costing}.${key} must be finite.`);
     }
-    result.costing_options = { [costing as string]: copied } as CostingOptions;
+    mirrored[costing] = { ...options };
   }
-  return result;
+
+  const normalized: NormalizedRequest = {
+    ...request,
+    locations,
+    costing,
+    ...(request.costing_options === undefined ? {} : { costing_options: mirrored }),
+    units: 'kilometers',
+    language: object(request.directions_options) && typeof request.directions_options.language === 'string'
+      ? request.directions_options.language
+      : 'id-ID',
+  };
+  const warnings = Object.keys(request).filter(key => !PASSTHROUGH.has(key) && !['locations', 'origin', 'destination', 'costing', 'units', 'language'].includes(key));
+  if (warnings.length) normalized.__warnings = warnings;
+  return normalized;
 }

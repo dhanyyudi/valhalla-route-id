@@ -1,20 +1,29 @@
-import type { Coordinates, Costing, CostingOptions } from './types.js';
+import type { Coordinates, Costing } from './types.js';
 
-/** Validated request with explicit correlation radius, reachability, units and language defaults. */
+export interface NormalizedLocation extends Coordinates {
+  type?: 'break' | 'through' | 'break_through' | 'via';
+  radius?: number;
+  minimum_reachability?: number;
+  preferred_side?: 'same' | 'opposite' | 'either';
+  heading?: number;
+  heading_tolerance?: number;
+  name?: string;
+  city?: string;
+  date_time?: string;
+  side_of_street?: string;
+}
 export interface NormalizedRequest {
-  /** Ordered start/end coordinates with the SDK's explicit correlation defaults. */
-  locations: Array<Coordinates & {
-    /** Correlation search radius in meters; the SDK sets 30. */
-    radius: number;
-    /** Minimum connected-node reachability; the SDK sets 0. */
-    minimum_reachability: number;
-  }>;
-  /** Validated road profile. */
+  locations: NormalizedLocation[];
   costing: Costing;
-  /** Validated options belonging to the selected profile. Unspecified values use native defaults. */
-  costing_options?: CostingOptions;
-  /** Native response distance units. */
+  costing_options?: Record<string, Record<string, unknown>>;
+  date_time?: { type: 1 | 2; value: string };
+  alternates?: number;
+  exclude_polygons?: string[];
+  exclude_locations?: Coordinates[];
+  avoid_edges?: number[];
+  shape_format?: 'polyline6' | 'polyline5' | 'geojson' | 'no_shape';
+  directions_options?: { language?: string; units?: string };
   units: 'kilometers';
-  /** Native instruction language. */
-  language: 'en-US';
+  language: string;
+  [key: string]: unknown;
 }
