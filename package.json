@@ -10,6 +10,7 @@
     "build": "pnpm run typecheck && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "typecheck:all": "pnpm run typecheck && pnpm --filter @tobilg/valhalla-core typecheck && pnpm --filter valhalla-browser typecheck && pnpm --filter valhalla-server typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:worker": "vitest run --config vitest.workers.config.ts",

@@ -27,6 +27,21 @@ export const BASE_COSTING_OPTIONS: readonly string[] = [
   'gate_penalty', 'private_access_penalty', 'toll_booth_cost', 'toll_booth_penalty', 'country_crossing_cost',
   'country_crossing_penalty', 'alley_penalty', 'dest_only_penalty', 'shortest',
 ];
+/** Driving settings; omitted values use the pinned Valhalla defaults. */
+export interface AutoCostingOptions {
+  /** Highway preference, 0–1; 0 avoids highways, 1 prefers them. */
+  use_highways?: number;
+  /** Toll road preference, 0–1; 0 avoids tolls, 1 prefers them. */
+  use_tolls?: number;
+  /** Distance preference, 0–1; 0 favours the fastest route, 1 the shortest. */
+  use_distance?: number;
+  /** Maximum speed in km/h. */
+  top_speed?: number;
+  /** Multiplier applied to the cost of traversing alleys, 0–1. */
+  alley_factor?: number;
+  /** Probability, 0–1, that a restricted turn or edge may be traversed. */
+  restriction_probability?: number;
+}
 /** Bicycle settings; omitted values use the pinned Valhalla defaults. */
 export interface BicycleCostingOptions {
   /** Bicycle type; defaults to hybrid. Type also determines the default cycling speed. */
@@ -40,6 +55,26 @@ export interface BicycleCostingOptions {
 export interface PedestrianCostingOptions {
   /** Walking speed in km/h, 0.5–25; default 5.1. */
   walking_speed?: number;
+}
+/** Motorcycle settings; omitted values use the pinned Valhalla defaults. */
+export interface MotorcycleCostingOptions {
+  /** Highway preference, 0–1; 0 avoids highways, 1 prefers them. */
+  use_highways?: number;
+  /** Toll road preference, 0–1; 0 avoids tolls, 1 prefers them. */
+  use_tolls?: number;
+  /** Unpaved trail preference, 0–1; 0 avoids trails, 1 prefers them. */
+  use_trails?: number;
+  /** Maximum speed in km/h. */
+  top_speed?: number;
+}
+/** Motor scooter settings; omitted values use the pinned Valhalla defaults. */
+export interface MotorScooterCostingOptions {
+  /** Primary road preference, 0–1; 0 avoids primary roads, 1 prefers them. */
+  use_primary?: number;
+  /** Hill preference, 0–1; 0 avoids hills, 1 prefers them. */
+  use_hills?: number;
+  /** Maximum speed in km/h. */
+  top_speed?: number;
 }
 /** Truck attributes used with restrictions recorded in the graph. Omitted values use native defaults. */
 export interface TruckCostingOptions {
@@ -65,38 +100,68 @@ export interface CostingOptions {
   /** Vehicle attributes for truck routing. */
   truck?: TruckCostingOptions;
 }
-/** Profile selection with its matching native option group. */
+/**
+ * Profile selection with its matching native option group.
+ * @remarks Each arm accepts only the group matching its profile. A computed key such as
+ * `{ [profile]: options }` is also accepted, because it cannot be checked statically; the
+ * request validator rejects a missing, mismatched or multi-group `costing_options` at runtime.
+ */
 export type RouteProfile =
   | {
       /** Driving is the default when omitted. */
       costing?: 'auto';
-      /** Driving tuning is not exposed. */
-      costing_options?: never;
-    }
-  | {
-      /** Cycling profile. */
-      costing: 'bicycle';
-      /** Only bicycle options are accepted. */
+      /** Only driving options are accepted. */
       costing_options?: {
-        /** Bicycle settings for this route. */
-        bicycle: BicycleCostingOptions;
-        /** Walking settings cannot be used for cycling. */
-        pedestrian?: never;
-        /** Truck settings cannot be used for cycling. */
+        /** Driving settings for this route. */
+        auto?: AutoCostingOptions;
+        /** Motorcycle settings cannot be used for driving. */
+        motorcycle?: never;
+        /** Motor scooter settings cannot be used for driving. */
+        motor_scooter?: never;
+        /** Truck settings cannot be used for driving. */
         truck?: never;
+        /** Bicycle settings cannot be used for driving. */
+        bicycle?: never;
+        /** Walking settings cannot be used for driving. */
+        pedestrian?: never;
       };
     }
   | {
-      /** Walking profile. */
-      costing: 'pedestrian';
-      /** Only pedestrian options are accepted. */
+      /** Motorcycle profile. */
+      costing: 'motorcycle';
+      /** Only motorcycle options are accepted. */
       costing_options?: {
-        /** Walking settings for this route. */
-        pedestrian: PedestrianCostingOptions;
-        /** Bicycle settings cannot be used for walking. */
-        bicycle?: never;
-        /** Truck settings cannot be used for walking. */
+        /** Motorcycle settings for this route. */
+        motorcycle?: MotorcycleCostingOptions;
+        /** Driving settings cannot be used for motorcycling. */
+        auto?: never;
+        /** Motor scooter settings cannot be used for motorcycling. */
+        motor_scooter?: never;
+        /** Truck settings cannot be used for motorcycling. */
         truck?: never;
+        /** Bicycle settings cannot be used for motorcycling. */
+        bicycle?: never;
+        /** Walking settings cannot be used for motorcycling. */
+        pedestrian?: never;
+      };
+    }
+  | {
+      /** Motor scooter profile. */
+      costing: 'motor_scooter';
+      /** Only motor scooter options are accepted. */
+      costing_options?: {
+        /** Motor scooter settings for this route. */
+        motor_scooter?: MotorScooterCostingOptions;
+        /** Driving settings cannot be used for a motor scooter. */
+        auto?: never;
+        /** Motorcycle settings cannot be used for a motor scooter. */
+        motorcycle?: never;
+        /** Truck settings cannot be used for a motor scooter. */
+        truck?: never;
+        /** Bicycle settings cannot be used for a motor scooter. */
+        bicycle?: never;
+        /** Walking settings cannot be used for a motor scooter. */
+        pedestrian?: never;
       };
     }
   | {
@@ -105,15 +170,61 @@ export type RouteProfile =
       /** Only truck options are accepted. */
       costing_options?: {
         /** Vehicle attributes for this route. */
-        truck: TruckCostingOptions;
+        truck?: TruckCostingOptions;
+        /** Driving settings cannot be used for truck routing. */
+        auto?: never;
+        /** Motorcycle settings cannot be used for truck routing. */
+        motorcycle?: never;
+        /** Motor scooter settings cannot be used for truck routing. */
+        motor_scooter?: never;
         /** Bicycle settings cannot be used for truck routing. */
         bicycle?: never;
         /** Walking settings cannot be used for truck routing. */
         pedestrian?: never;
       };
+    }
+  | {
+      /** Cycling profile. */
+      costing: 'bicycle';
+      /** Only bicycle options are accepted. */
+      costing_options?: {
+        /** Bicycle settings for this route. */
+        bicycle?: BicycleCostingOptions;
+        /** Driving settings cannot be used for cycling. */
+        auto?: never;
+        /** Motorcycle settings cannot be used for cycling. */
+        motorcycle?: never;
+        /** Motor scooter settings cannot be used for cycling. */
+        motor_scooter?: never;
+        /** Truck settings cannot be used for cycling. */
+        truck?: never;
+        /** Walking settings cannot be used for cycling. */
+        pedestrian?: never;
+      };
+    }
+  | {
+      /** Walking profile. */
+      costing: 'pedestrian';
+      /** Only pedestrian options are accepted. */
+      costing_options?: {
+        /** Walking settings for this route. */
+        pedestrian?: PedestrianCostingOptions;
+        /** Driving settings cannot be used for walking. */
+        auto?: never;
+        /** Motorcycle settings cannot be used for walking. */
+        motorcycle?: never;
+        /** Motor scooter settings cannot be used for walking. */
+        motor_scooter?: never;
+        /** Truck settings cannot be used for walking. */
+        truck?: never;
+        /** Bicycle settings cannot be used for walking. */
+        bicycle?: never;
+      };
     };
 /** Request fields upstream did not expose; every one is optional. */
 export interface ExtendedRouteFields {
+  /** Profile options keyed by costing, for example `{ auto: { use_tolls: 0 } }`; the validator accepts only the group matching `costing`. */
+  costing_options?: Record<string, Record<string, unknown>>;
   locations?: Array<Coordinates & {
     type?: 'break' | 'through' | 'break_through' | 'via';
     preferred_side?: 'same' | 'opposite' | 'either';
@@ -132,22 +243,19 @@ export interface ExtendedRouteFields {
   directions_options?: { language?: string; units?: string };
 }
 /**
- * Exactly two locations with a supported road profile and optional matching settings.
- * @remarks Supply either origin/destination or an ordered locations tuple.
- * The SDK fixes kilometers, English instructions, a 30 m correlation radius,
- * and minimum reachability 0. Additional native request options are not exposed.
+ * N ordered locations (at least two) with a supported road profile and optional matching settings.
+ * @remarks Supply origin/destination, an ordered locations array, or both; the validator requires
+ * two or more finite locations. The SDK fixes kilometers, a 30 m correlation radius and minimum
+ * reachability 0 per location, and defaults instruction language to Bahasa Indonesia
+ * (`directions_options.language` is `id-ID` unless overridden). `date_time`, `alternates`,
+ * `exclude_polygons` and `shape_format` are accepted.
  */
-export type RouteRequest = RouteProfile & ExtendedRouteFields & (
-  | {
-      /** Start coordinate inside the dataset coverage. */
-      origin: Coordinates;
-      /** End coordinate inside the dataset coverage. */
-      destination: Coordinates;
-    }
-  | {
-      /** Ordered pair: start, then end. Intermediate stops are unsupported. */
-      locations: [Coordinates, Coordinates];
-    });
+export type RouteRequest = RouteProfile & ExtendedRouteFields & {
+  /** Start coordinate inside the dataset coverage. */
+  origin?: Coordinates;
+  /** End coordinate inside the dataset coverage. */
+  destination?: Coordinates;
+};
 /** Delivery method for the same standard Valhalla graph tiles. */
 export type TileTransport = 'indexed-tar' | 'individual-tiles';
 /** Current stage of worker initialization or routing. Events are informational, not a percentage. */
