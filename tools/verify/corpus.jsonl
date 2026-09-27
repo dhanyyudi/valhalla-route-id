@@ -1,0 +1,16 @@
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"auto","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"motorcycle","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"motor_scooter","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"bicycle","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"pedestrian","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-7.2575,"lon":112.7521},{"lat":-7.9666,"lon":112.6326}],"costing":"truck","costing_options":{"truck":{"height":4.1,"width":2.6,"length":12,"weight":20,"axle_load":9}},"directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-5.9318,"lon":105.9964},{"lat":-5.8706,"lon":105.7538}],"costing":"auto","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-8.6705,"lon":115.2126},{"lat":3.5952,"lon":98.6722}],"costing":"motorcycle","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"auto","date_time":{"type":1,"value":"2026-09-28T07:00"},"directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"auto","date_time":{"type":2,"value":"2026-09-28T17:00"},"directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"auto","costing_options":{"auto":{"use_tolls":0,"use_highways":0.2}},"directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191},{"lat":-7.2575,"lon":112.7521}],"costing":"auto","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":-6.9175,"lon":107.6191}],"costing":"auto","shape_format":"geojson","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272,"preferred_side":"opposite"},{"lat":-6.9175,"lon":107.6191}],"costing":"auto","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":1.3521,"lon":103.8198}],"costing":"auto","directions_options":{"language":"en-US"}}
+{"locations":[{"lat":-6.1754,"lon":106.8272},{"lat":3.5952,"lon":98.6722}],"costing":"auto","directions_options":{"language":"en-US"}}

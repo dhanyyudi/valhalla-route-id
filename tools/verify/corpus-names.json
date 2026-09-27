@@ -1,0 +1,18 @@
+[
+  "jakarta-bandung-auto",
+  "jakarta-bandung-motorcycle",
+  "jakarta-bandung-motor-scooter",
+  "jakarta-bandung-bicycle",
+  "jakarta-bandung-pedestrian",
+  "surabaya-malang-truck",
+  "merak-bakauheni-ferry",
+  "denpasar-loop-motorcycle",
+  "depart-0700",
+  "arrive-1700",
+  "no-tolls",
+  "waypoints-three",
+  "shape-geojson",
+  "preferred-side-opposite",
+  "outside-coverage",
+  "disconnected-island"
+]
