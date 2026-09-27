@@ -65,7 +65,7 @@ if regional:
     runtime_config['mjolnir'].update(admin='', timezone='')
 config_bytes = (json.dumps(runtime_config, sort_keys=True, indent=2) + '\n').encode()
 config_hash = sha(config_bytes)
-costings = ['auto', 'bicycle', 'pedestrian', 'truck']
+costings = ['auto', 'motorcycle', 'motor_scooter', 'truck', 'bicycle', 'pedestrian']
 identity = archive_hash + config_hash + revision + json.dumps(costings)
 if regional:
     build_metadata = {'configSha256': sha(config_file.read_bytes()), 'includedModes': ['driving', 'bicycle', 'pedestrian']}

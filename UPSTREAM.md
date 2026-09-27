@@ -34,17 +34,29 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
    made `matrix` and `optimized_route` exhaust the default 512 MiB ceiling with
    `runtimeError: MEMORY` (846 MiB high-water); with the shared policy all three tools fit the
    default 256 MiB initial heap.
-5. `tools/smoke/route-smoke.test.ts` — two behaviours of the pinned fixture that the plan's cases
+5. `scripts/build-dataset.py` and `scripts/prepare-data.py` — both emit
+   `['auto', 'motorcycle', 'motor_scooter', 'truck', 'bicycle', 'pedestrian']` instead of upstream's
+   `['auto', 'bicycle', 'pedestrian', 'truck']`. The manifest's `costings` list is what the SDK
+   validates a request against *before* it reaches the runtime, so a release built with the upstream
+   list is unusable for `motorcycle` and `motor_scooter` however complete the tiles are. These two
+   lines are the only builder edits this project carries; the tile builder itself is upstream's,
+   rebuilt from the pinned revision. Because `costings` participates in the release identity, the
+   change renames every release built after it, and it changes what a *rebuilt* Liechtenstein
+   fixture would declare (see divergence 6).
+6. `tools/smoke/route-smoke.test.ts` — two behaviours of the pinned fixture that the plan's cases
    could not assert as written. The Liechtenstein release offers no alternative path for the
    Vaduz→Malbun smoke leg, so native omits `alternates` from the route response instead of
    returning an empty array; that case asserts the documented
    `alternates === undefined || Array.isArray(alternates)` fallback and still requires a non-empty
-   primary trip. The same release declares only `auto`, `bicycle`, `pedestrian` and `truck`
-   (vendored `scripts/prepare-data.py`), so it refuses `motor_scooter` with `UNSUPPORTED_COSTING`
-   before native routing; the suite pins that refusal and proves distinct-profile routing with
-   `bicycle` instead. Both were observed against `liechtenstein-2015-v1-d769cb7c11b2936d`, never
-   worked around.
-6. `tools/smoke/tools-smoke.test.ts` — the three new tools against the same fixture with `auto`,
+   primary trip. The same release declares only `auto`, `bicycle`, `pedestrian` and `truck`, because
+   the published `liechtenstein-2015-v1-d769cb7c11b2936d` directory was built from `prepare-data.py`
+   before divergence 5 and stays immutable, so it still refuses `motor_scooter` with
+   `UNSUPPORTED_COSTING` before native routing; the suite pins that refusal and proves
+   distinct-profile routing with `bicycle` instead. Re-running `pnpm run data:region` now emits a
+   six-costing fixture under a new release name, at which point that refusal case must be revisited.
+   Both behaviours were observed against `liechtenstein-2015-v1-d769cb7c11b2936d`, never worked
+   around.
+7. `tools/smoke/tools-smoke.test.ts` — the three new tools against the same fixture with `auto`,
    the only profile the release declares for them. The observed native shapes are asserted as
    they are: isochrone is a GeoJSON `FeatureCollection` (one `Polygon` feature per band with
    `polygons: true`, largest band first, `LineString` without it), `optimized_route` returns a
@@ -55,7 +67,7 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
 
     git clone https://github.com/tobilg/valhalla-wasm /tmp/valhalla-wasm-next
     git -C /tmp/valhalla-wasm-next checkout <new tag>
-    # re-copy the same paths, then re-apply the six divergences above
+    # re-copy the same paths, then re-apply the seven divergences above
     pnpm install && pnpm test && pnpm run build:sdk && pnpm run smoke
 
 Never take a new upstream release without rebuilding the Indonesia dataset with
