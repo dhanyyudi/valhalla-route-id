@@ -39,11 +39,28 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
    `['auto', 'bicycle', 'pedestrian', 'truck']`. The manifest's `costings` list is what the SDK
    validates a request against *before* it reaches the runtime, so a release built with the upstream
    list is unusable for `motorcycle` and `motor_scooter` however complete the tiles are. These two
-   lines are the only builder edits this project carries; the tile builder itself is upstream's,
-   rebuilt from the pinned revision. Because `costings` participates in the release identity, the
+   lines are the only costings edits this project carries; the tile builder itself is upstream's,
+   rebuilt from the pinned revision, and its cache ceiling (divergence 6) is the only other builder
+   change. Because `costings` participates in the release identity, the
    change renames every release built after it, and it changes what a *rebuilt* Liechtenstein
-   fixture would declare (see divergence 6).
-6. `tools/smoke/route-smoke.test.ts` — two behaviours of the pinned fixture that the plan's cases
+   fixture would declare (see divergence 7).
+6. `scripts/build-dataset.py` — `max_cache_size` is raised from 32 MiB to 268435456 bytes (256 MiB),
+   and only that value changes: `use_lru_mem_cache=True` and `lru_mem_cache_hard_control=True` stay as
+   upstream wrote them. The 32 MiB ceiling was sized for the Liechtenstein fixture and is fatal for
+   Indonesia: Valhalla's `TileCacheLRU::Put` refuses any tile larger than the ceiling with an
+   **unconditional** `throw std::runtime_error("TileCacheLRU: tile size is bigger than max cache
+   size")` (`src/baldr/graphreader.cc`, the LRU hard-control flag only selects trimming behaviour), so
+   the tile builder aborted with `SIGABRT` a few minutes in, once `BuildLocalTiles` handed the cache
+   the Jakarta level-2 tiles. Two are oversized — `tiles/2/000/483/547.gph` at 39,562,144 B (37.73
+   MiB, Central/East Jakarta) and `tiles/2/000/482/107.gph` at 48,489,040 B (46.25 MiB, South
+   Jakarta / Depok) — and the same two tiles exist in the production `20260927-2013_v3.9.0_osm260926`
+   release built from the same extract, which is why that build succeeds with a different cache
+   configuration. 256 MiB clears the largest observed tile with room for growth in the same
+   0.25° cells. Note for consumers: the released `config.json` ships this value but
+   `packages/valhalla-core/src/engine.ts` rewrites `max_cache_size` from the caller's
+   `memoryBudgetBytes` at load time, so fetching those two tiles needs a budget above ~46.3 MiB
+   (default 32 MiB, ceiling 128 MiB).
+7. `tools/smoke/route-smoke.test.ts` — two behaviours of the pinned fixture that the plan's cases
    could not assert as written. The Liechtenstein release offers no alternative path for the
    Vaduz→Malbun smoke leg, so native omits `alternates` from the route response instead of
    returning an empty array; that case asserts the documented
@@ -56,7 +73,7 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
    six-costing fixture under a new release name, at which point that refusal case must be revisited.
    Both behaviours were observed against `liechtenstein-2015-v1-d769cb7c11b2936d`, never worked
    around.
-7. `tools/smoke/tools-smoke.test.ts` — the three new tools against the same fixture with `auto`,
+8. `tools/smoke/tools-smoke.test.ts` — the three new tools against the same fixture with `auto`,
    the only profile the release declares for them. The observed native shapes are asserted as
    they are: isochrone is a GeoJSON `FeatureCollection` (one `Polygon` feature per band with
    `polygons: true`, largest band first, `LineString` without it), `optimized_route` returns a
@@ -67,7 +84,7 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
 
     git clone https://github.com/tobilg/valhalla-wasm /tmp/valhalla-wasm-next
     git -C /tmp/valhalla-wasm-next checkout <new tag>
-    # re-copy the same paths, then re-apply the seven divergences above
+    # re-copy the same paths, then re-apply the eight divergences above
     pnpm install && pnpm test && pnpm run build:sdk && pnpm run smoke
 
 Never take a new upstream release without rebuilding the Indonesia dataset with

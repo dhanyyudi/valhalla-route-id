@@ -173,7 +173,7 @@ def main():
     config = json.loads(subprocess.check_output([sys.executable, str(source / 'scripts/valhalla_build_config')]))
     config['mjolnir'].update(tile_dir=str(work / 'tiles'), tile_url='', admin=str(work / 'admins.sqlite'),
                              timezone=str(timezone), concurrency=args.threads, include_driving=True,
-                             include_bicycle=True, include_pedestrian=True, max_cache_size=32 * 1024 * 1024,
+                             include_bicycle=True, include_pedestrian=True, max_cache_size=268435456,
                              use_lru_mem_cache=True, lru_mem_cache_hard_control=True, global_synchronized_cache=False)
     config['mjolnir'].pop('tile_extract', None)
     config['mjolnir']['data_processing']['use_admin_db'] = True
