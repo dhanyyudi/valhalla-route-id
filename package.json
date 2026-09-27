@@ -34,9 +34,10 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.22.0",
-    "@cloudflare/workers-types": "^4",
+    "@cloudflare/workers-types": "^5",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/react": "^16",
+    "@types/node": "22.20.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5",
@@ -45,7 +46,7 @@
     "typescript": "^5.9",
     "valhalla-server": "workspace:*",
     "vite": "8.3.1",
-    "vitest": "5.0.2",
+    "vitest": "4.1.11",
     "wrangler": "4.141.0"
   }
 }
