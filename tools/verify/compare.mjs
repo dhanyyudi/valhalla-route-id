@@ -332,8 +332,9 @@ async function main() {
       `  rewritten requests (generated from \`${join('tools', 'verify', 'corpus-sdk-normalised.jsonl')}\`);`,
       '  for these cases the native answer for the rewritten request is byte-identical to the WASM',
       '  answer, so the engines agree and only the request differs.',
-      `- ${byEngine.length} remain genuine engine/loader disagreements: native and WASM differ even on the`,
-      '  identical normalised request. These are the cases that block publication.',
+      `- ${byEngine.length === 0
+        ? '0 remain genuine engine/loader disagreements — the two engines agreed byte-for-byte on every request they were both given. Any such case would block publication.'
+        : `${byEngine.length} remain genuine engine/loader disagreements: native and WASM differ even on the identical normalised request. These block publication.`}`,
       `- ${bySdkGate.length} are SDK-level failures with no engine answer at all (a host gate such as the`,
       '  operation deadline or a resource limit), reported as `sdkError` rather than as agreement.',
       ...(byDeadline.length ? [

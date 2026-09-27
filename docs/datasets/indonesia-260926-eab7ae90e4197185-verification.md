@@ -57,8 +57,7 @@ Of 5 differing case(s):
   rewritten requests (generated from `tools/verify/corpus-sdk-normalised.jsonl`);
   for these cases the native answer for the rewritten request is byte-identical to the WASM
   answer, so the engines agree and only the request differs.
-- 0 remain genuine engine/loader disagreements: native and WASM differ even on the
-  identical normalised request. These are the cases that block publication.
+- 0 remain genuine engine/loader disagreements — the two engines agreed byte-for-byte on every request they were both given. Any such case would block publication.
 - 2 are SDK-level failures with no engine answer at all (a host gate such as the
   operation deadline or a resource limit), reported as `sdkError` rather than as agreement.
 
@@ -197,5 +196,5 @@ wasm:   {"nativeError":442}
 - This is a `route` action corpus. `isochrone`, `optimized_route` and `matrix` are exported by
   the runtime but are not covered here.
 
-Generated 2026-09-27T15:50:30Z by `node tools/verify/compare.mjs indonesia-260926-eab7ae90e4197185`.
+Generated 2026-09-27T16:11:52Z by `node tools/verify/compare.mjs indonesia-260926-eab7ae90e4197185`.
 
