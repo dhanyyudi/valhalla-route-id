@@ -21,3 +21,6 @@ public/datasets/
 # Env
 .env
 .env.local
+
+# SDD scratch
+.superpowers/
