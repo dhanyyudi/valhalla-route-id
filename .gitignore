@@ -25,3 +25,6 @@ public/datasets/
 
 # SDD scratch
 .superpowers/
+
+# Internal planning docs live under .superpowers/ (never published)
+docs/superpowers/
