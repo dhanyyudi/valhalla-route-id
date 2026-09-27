@@ -13,12 +13,12 @@
   },
   "artifacts": {
     "public/wasm/valhalla.js": {
-      "bytes": 116584,
-      "sha256": "fabe0f4830ab5bbde355c9ebc749b4b5dc83bffb05930080bf6f3d74961fa2bb"
+      "bytes": 117879,
+      "sha256": "f6038d92d60ba2850300c73c9b8a9f01062acdc81610a666f3b22ef85c0acbbe"
     },
     "public/wasm/valhalla.wasm": {
-      "bytes": 9861835,
-      "sha256": "2097e57700e51bc703da06ecd74fb2edf656b58173e51488a3cdc9ffe0cc0db1"
+      "bytes": 10109445,
+      "sha256": "81d3d9241c897d822a672eb962a4994cf03f79c7c1eb3377b999281bab404744"
     }
   },
   "abi": 3,

@@ -26,6 +26,9 @@ scope.onmessage = ({ data }: MessageEvent<WorkerRequest>) => {
       switch (data.type) {
         case 'initialize': wasmUrl = data.options.wasmUrl; result = await engine.initialize(data.options); break;
         case 'route': result = await engine.route(data.request); break;
+        case 'isochrone': result = await engine.isochrone(data.request); break;
+        case 'optimized_route': result = await engine.optimizedRoute(data.request); break;
+        case 'matrix': result = await engine.matrix(data.request); break;
         case 'diagnostics': {
           const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
           result = { ...await engine.diagnostics(), resourceTiming: entries.map(e => ({ name: e.name, durationMs: e.duration,

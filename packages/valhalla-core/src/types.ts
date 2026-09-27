@@ -256,6 +256,50 @@ export type RouteRequest = RouteProfile & ExtendedRouteFields & {
   /** End coordinate inside the dataset coverage. */
   destination?: Coordinates;
 };
+/**
+ * One or more centers with the contour bands to compute around them.
+ * @remarks Contours are reachability bands in minutes and/or kilometers from each center.
+ * Native rejects a request with no contours. `polygons` selects filled polygons instead of
+ * the default contour lines; `denoise` (0–1) removes small disconnected areas and
+ * `generalize` (0–500 m) simplifies the geometry.
+ */
+export interface IsochroneRequest {
+  /** Centers of the isochrones; the dataset limits isochrone requests to one location. */
+  locations: Coordinates[];
+  /** Profile that defines reachability. */
+  costing: Costing;
+  /** Contour bands, at least one, each with a `time` in minutes or a `distance` in kilometers and an optional hex `color`. */
+  contours: Array<{ time?: number; distance?: number; color?: string }>;
+  /** Return filled polygons instead of lines. */
+  polygons?: boolean;
+  /** Contour denoising factor, 0–1. */
+  denoise?: number;
+  /** Polygon generalization tolerance in meters, 0–500. */
+  generalize?: number;
+  /** Include the input centers in the response. */
+  show_locations?: boolean;
+  /** Profile options keyed by costing; the validator accepts only the group matching `costing`. */
+  costing_options?: Record<string, Record<string, unknown>>;
+  /** Departure or arrival time applied to the centers. */
+  date_time?: { type: 1 | 2; value: string };
+}
+/**
+ * Sources crossed with targets, with computed times and distances for every pair.
+ * @remarks Every source is paired with every target, so the response is a
+ * `sources.length` by `targets.length` matrix.
+ */
+export interface MatrixRequest {
+  /** Origin locations, at least one. */
+  sources: Array<Coordinates & { id?: number | string }>;
+  /** Destination locations, at least one. */
+  targets: Array<Coordinates & { id?: number | string }>;
+  /** Profile used for every pair. */
+  costing: Costing;
+  /** Profile options keyed by costing; the validator accepts only the group matching `costing`. */
+  costing_options?: Record<string, Record<string, unknown>>;
+  /** Departure or arrival time applied to the appropriate matrix side. */
+  date_time?: { type: 1 | 2; value: string };
+}
 /** Delivery method for the same standard Valhalla graph tiles. */
 export type TileTransport = 'indexed-tar' | 'individual-tiles';
 /** Current stage of worker initialization or routing. Events are informational, not a percentage. */
@@ -280,9 +324,9 @@ export interface ProgressEvent extends ProgressDetail {
  * They neither change costing nor impose a total-worker memory limit.
  */
 export interface SearchMemoryOptions {
-  /** Initial single-direction A* label reservation: integer 0–2,000,000, default 16,384. Zero grows storage on demand. */
+  /** Initial single-direction A* label reservation: integer 0–2,000,000, default 16,384. Zero grows storage on demand. Also sizes the Dijkstra reservations behind the isochrone tool. */
   astar?: number;
-  /** Initial bidirectional A* label reservation in each direction: integer 0–2,000,000, default 16,384. Zero grows storage on demand. */
+  /** Initial bidirectional A* label reservation in each direction: integer 0–2,000,000, default 16,384. Zero grows storage on demand. Also sizes the Dijkstra reservations behind the matrix and optimized-route tools. */
   bidirectionalAstar?: number;
   /** Ask native cleanup to release used search-label vectors after each route; default false retains reusable reservations. Does not shrink WASM linear memory or clear decoded tiles. */
   clearReservedMemory?: boolean;

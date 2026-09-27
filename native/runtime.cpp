@@ -87,6 +87,25 @@ static std::unique_ptr<BrowserReader> reader;
 static std::unique_ptr<tyr::actor_t> actor;
 static std::string output;
 
+// One actor call path for every exported action. A template cannot carry C language linkage,
+// so this helper stays outside the extern "C" block below.
+template <typename Call> static const char* call_actor(Call&& call) {
+  try {
+    if (!actor) throw std::runtime_error("Actor not initialized");
+    const std::function<void()> interrupt = []() {
+      if (check_interrupt()) throw std::runtime_error("Routing interrupted");
+    };
+    output = call(has_interrupt() ? &interrupt : nullptr);
+  } catch (const std::bad_alloc&) {
+    output = "{\"runtimeError\":\"MEMORY\"}";
+  } catch (const valhalla_exception_t& error) {
+    output = "{\"nativeError\":" + std::to_string(error.code) + "}";
+  } catch (const std::exception&) {
+    output = "{\"runtimeError\":\"ROUTING\"}";
+  }
+  return output.c_str();
+}
+
 extern "C" {
 const char* vb_dispose() {
   actor.reset();
@@ -112,20 +131,19 @@ const char* vb_init(const char* json) {
 }
 
 const char* vb_route(const char* json) {
-  try {
-    if (!actor) throw std::runtime_error("Actor not initialized");
-    const std::function<void()> interrupt = []() {
-      if (check_interrupt()) throw std::runtime_error("Routing interrupted");
-    };
-    output = actor->route(json, has_interrupt() ? &interrupt : nullptr);
-  } catch (const std::bad_alloc&) {
-    output = "{\"runtimeError\":\"MEMORY\"}";
-  } catch (const valhalla_exception_t& error) {
-    output = "{\"nativeError\":" + std::to_string(error.code) + "}";
-  } catch (const std::exception&) {
-    output = "{\"runtimeError\":\"ROUTING\"}";
-  }
-  return output.c_str();
+  return call_actor([&](const std::function<void()>* interrupt) { return actor->route(json, interrupt); });
+}
+
+const char* vb_isochrone(const char* json) {
+  return call_actor([&](const std::function<void()>* interrupt) { return actor->isochrone(json, interrupt); });
+}
+
+const char* vb_optimized_route(const char* json) {
+  return call_actor([&](const std::function<void()>* interrupt) { return actor->optimized_route(json, interrupt); });
+}
+
+const char* vb_matrix(const char* json) {
+  return call_actor([&](const std::function<void()>* interrupt) { return actor->matrix(json, interrupt); });
 }
 
 const char* vb_stats() {

@@ -24,7 +24,7 @@ if(EMSCRIPTEN)
     -sSTACK_SIZE=2097152 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=shell
     -sFILESYSTEM=1 -sASSERTIONS=0
     "-sINCOMING_MODULE_JS_API=['instantiateWasm','wasmMemory','print','printErr']"
-    "-sEXPORTED_FUNCTIONS=['_vb_init','_vb_route','_vb_dispose','_vb_stats','_malloc','_free']"
+    "-sEXPORTED_FUNCTIONS=['_vb_init','_vb_route','_vb_isochrone','_vb_optimized_route','_vb_matrix','_vb_dispose','_vb_stats','_malloc','_free']"
     "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','FS']")
   set_property(TARGET valhalla-runtime APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/runtime-library.js)
 else()

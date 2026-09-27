@@ -6,7 +6,7 @@ import { validateRequest } from '@tobilg/valhalla-core/profiles';
 import { resolveSearchMemory } from '@tobilg/valhalla-core/search-memory';
 import { resolveWasmMemory, NODE_WASM_MEMORY } from '@tobilg/valhalla-core/wasm-memory';
 import type { ThreadOperations, ThreadRequest, ThreadResponse } from './thread-protocol.js';
-import type { ServerOptions, OperationOptions, StartupResult, RouteRequest, RouteResult, Diagnostics } from './types.js';
+import type { ServerOptions, OperationOptions, StartupResult, RouteRequest, RouteResult, Diagnostics, IsochroneRequest, MatrixRequest } from './types.js';
 export * from './index.js';
 
 /** Node configuration. Dataset URLs must be absolute HTTP(S) URLs. */
@@ -126,6 +126,39 @@ export class Router {
       await this.ready();
       this.active?.signal.throwIfAborted();
       const result = await this.send('route', { request: normalized });
+      return { ...result, diagnostics: { ...result.diagnostics, queueWaitMs, hostRouteMs: performance.now() - start } };
+    });
+  }
+
+  /** Compute reachability contours around one or more centers. Native limits isochrone requests to a single location. */
+  async isochrone(request: IsochroneRequest, options: OperationOptions = {}): Promise<RouteResult> {
+    const normalized = validateRequest(request, { minimumLocations: 1 });
+    return this.run(options, async (queueWaitMs, start) => {
+      await this.ready();
+      this.active?.signal.throwIfAborted();
+      const result = await this.send('isochrone', { request: normalized });
+      return { ...result, diagnostics: { ...result.diagnostics, queueWaitMs, hostRouteMs: performance.now() - start } };
+    });
+  }
+
+  /** Compute an optimized visiting order for three or more locations. */
+  async optimizedRoute(request: RouteRequest, options: OperationOptions = {}): Promise<RouteResult> {
+    const normalized = validateRequest(request, { minimumLocations: 3 });
+    return this.run(options, async (queueWaitMs, start) => {
+      await this.ready();
+      this.active?.signal.throwIfAborted();
+      const result = await this.send('optimized_route', { request: normalized });
+      return { ...result, diagnostics: { ...result.diagnostics, queueWaitMs, hostRouteMs: performance.now() - start } };
+    });
+  }
+
+  /** Compute times and distances for every source/target pair. */
+  async matrix(request: MatrixRequest, options: OperationOptions = {}): Promise<RouteResult> {
+    const normalized = validateRequest(request, { minimumLocations: 1 });
+    return this.run(options, async (queueWaitMs, start) => {
+      await this.ready();
+      this.active?.signal.throwIfAborted();
+      const result = await this.send('matrix', { request: normalized });
       return { ...result, diagnostics: { ...result.diagnostics, queueWaitMs, hostRouteMs: performance.now() - start } };
     });
   }

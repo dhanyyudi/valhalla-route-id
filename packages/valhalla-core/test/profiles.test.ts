@@ -54,8 +54,31 @@ describe('validateRequest', () => {
   });
 
   it('rejects fewer than two locations and non-finite coordinates', () => {
-    expect(() => validateRequest({ locations: [at(-6.2, 106.8)] })).toThrowError(/At least two locations/);
+    expect(() => validateRequest({ locations: [at(-6.2, 106.8)] })).toThrowError(/At least 2 location\(s\)/);
     expect(() => validateRequest({ locations: [at(Number.NaN, 106.8), at(-6.9, 107.6)] })).toThrowError(/finite/);
+  });
+
+  it('honours a raised or lowered minimum location count', () => {
+    expect(() => validateRequest({ locations: [at(-6.2, 106.8)] }, { minimumLocations: 3 }))
+      .toThrowError(/At least 3 location\(s\)/);
+    expect(validateRequest({ locations: [at(-6.2, 106.8)] }, { minimumLocations: 1 }).locations).toHaveLength(1);
+    expect(() => validateRequest({ locations: [] }, { minimumLocations: 1 })).toThrowError(/At least 1 location\(s\)/);
+  });
+
+  it('validates matrix sources and targets as the request locations', () => {
+    const result = validateRequest({
+      sources: [at(-6.2, 106.8), { ...at(-6.3, 106.9), id: 'depot' }],
+      targets: [at(-6.9, 107.6)],
+      costing: 'auto',
+    }, { minimumLocations: 1 });
+    expect(result.locations).toHaveLength(3);
+    expect(result.locations.every(location => location.radius === 30)).toBe(true);
+    expect(result.sources).toHaveLength(2);
+    expect(result.targets).toHaveLength(1);
+    // Documented matrix fields are preserved without unknown-field warnings.
+    expect(result.__warnings).toBeUndefined();
+    expect(() => validateRequest({ sources: [at(-6.2, 106.8)], costing: 'auto' }, { minimumLocations: 1 }))
+      .toThrowError(/At least 1 location\(s\)/);
   });
 
   it('records unknown top-level fields as warnings instead of dropping them', () => {

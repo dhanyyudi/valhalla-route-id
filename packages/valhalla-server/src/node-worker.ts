@@ -19,7 +19,10 @@ port.on('message', (message: ThreadRequest) => {
     id = message.id;
     try {
       const result = message.type === 'initialize' ? await engine.initialize(message.options) :
-        message.type === 'route' ? await engine.route(message.request) : await engine.diagnostics();
+        message.type === 'route' ? await engine.route(message.request) :
+        message.type === 'isochrone' ? await engine.isochrone(message.request) :
+        message.type === 'optimized_route' ? await engine.optimizedRoute(message.request) :
+        message.type === 'matrix' ? await engine.matrix(message.request) : await engine.diagnostics();
       port.postMessage({ type: 'result', id, result });
     } catch (error) { port.postMessage({ type: 'error', id, error: asError(error).toJSON() }); }
   });

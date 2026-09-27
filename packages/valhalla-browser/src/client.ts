@@ -2,7 +2,7 @@
 import { workerUrl as defaultWorkerUrl, wasmUrl as defaultWasmUrl } from 'virtual:runtime-assets';
 import { RoutingError, cancelled } from './errors.js';
 import type { Operations, WorkerRequest, WorkerResponse } from './protocol.js';
-import type { Diagnostics, RouteRequest, RouteResult, RouterOptions, StartupResult } from './types.js';
+import type { Diagnostics, IsochroneRequest, MatrixRequest, RouteRequest, RouteResult, RouterOptions, StartupResult } from './types.js';
 import { validateRequest } from './profiles.js';
 import { resolveWasmMemory } from '@tobilg/valhalla-core/wasm-memory';
 export { RoutingError } from './errors.js';
@@ -203,6 +203,55 @@ export class Router {
     finally { signal?.removeEventListener('abort', abortInitialization); }
     if (signal?.aborted) throw cancelled();
     const result = await this.send('route', { request: normalized }, signal);
+    return { ...result, diagnostics: { ...result.diagnostics, hostRouteMs: performance.now() - started } };
+  }
+
+  /**
+   * Compute reachability contours around one or more centers, initializing lazily and queuing behind other native operations.
+   * @param request - Centers with the contour bands and profile to compute them for.
+   * @returns Complete native GeoJSON, dataset identity and per-call measurements.
+   * @throws {@link RoutingError} for invalid input, coverage/no-route, transport or lifecycle failures.
+   * @remarks Native limits isochrone requests to a single location. As with {@link route}, aborting
+   * the signal terminates the worker and rejects all pending operations.
+   */
+  async isochrone(request: IsochroneRequest, { signal }: { signal?: AbortSignal } = {}): Promise<RouteResult> {
+    const started = performance.now();
+    const normalized = validateRequest(request, { minimumLocations: 1 });
+    if (signal?.aborted) throw cancelled();
+    await this.initialize();
+    const result = await this.send('isochrone', { request: normalized }, signal);
+    return { ...result, diagnostics: { ...result.diagnostics, hostRouteMs: performance.now() - started } };
+  }
+
+  /**
+   * Compute an optimized visiting order for three or more locations, initializing lazily and queuing behind other native operations.
+   * @param request - Ordered locations that need not already be in visiting order.
+   * @returns The optimized native trip, dataset identity and per-call measurements.
+   * @throws {@link RoutingError} for invalid input, coverage/no-route, transport or lifecycle failures.
+   * @remarks Aborting the signal terminates the worker and rejects all pending operations, as with {@link route}.
+   */
+  async optimizedRoute(request: RouteRequest, { signal }: { signal?: AbortSignal } = {}): Promise<RouteResult> {
+    const started = performance.now();
+    const normalized = validateRequest(request, { minimumLocations: 3 });
+    if (signal?.aborted) throw cancelled();
+    await this.initialize();
+    const result = await this.send('optimized_route', { request: normalized }, signal);
+    return { ...result, diagnostics: { ...result.diagnostics, hostRouteMs: performance.now() - started } };
+  }
+
+  /**
+   * Compute times and distances for every source/target pair, initializing lazily and queuing behind other native operations.
+   * @param request - Sources crossed with targets under one profile.
+   * @returns The native `sources_to_targets` matrix, dataset identity and per-call measurements.
+   * @throws {@link RoutingError} for invalid input, coverage/no-route, transport or lifecycle failures.
+   * @remarks Aborting the signal terminates the worker and rejects all pending operations, as with {@link route}.
+   */
+  async matrix(request: MatrixRequest, { signal }: { signal?: AbortSignal } = {}): Promise<RouteResult> {
+    const started = performance.now();
+    const normalized = validateRequest(request, { minimumLocations: 1 });
+    if (signal?.aborted) throw cancelled();
+    await this.initialize();
+    const result = await this.send('matrix', { request: normalized }, signal);
     return { ...result, diagnostics: { ...result.diagnostics, hostRouteMs: performance.now() - started } };
   }
 

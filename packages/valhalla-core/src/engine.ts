@@ -115,9 +115,14 @@ export class Engine {
     this.config.mjolnir.global_synchronized_cache = false;
     // Reserve modest reusable search storage without capping native expansions.
     // Keep source metadata immutable; record the effective configuration separately.
+    // The Dijkstra reservations back the matrix, optimized-route and isochrone tools. They are
+    // separate native keys, and the dataset defaults reserve millions of labels per location,
+    // which cannot fit any supported memory ceiling, so they follow the same resolved policy.
     this.config.thor = { ...this.config.thor,
       max_reserved_labels_count_astar: searchMemory.astar,
       max_reserved_labels_count_bidir_astar: searchMemory.bidirectionalAstar,
+      max_reserved_labels_count_dijkstras: searchMemory.astar,
+      max_reserved_labels_count_bidir_dijkstras: searchMemory.bidirectionalAstar,
       clear_reserved_memory: searchMemory.clearReservedMemory };
     this.effectiveConfigSha256 = await sha256(new Uint8Array(new TextEncoder().encode(JSON.stringify(this.config))));
     const metadataMs = performance.now() - begin;
@@ -157,6 +162,33 @@ export class Engine {
     diagnostics.decodedCacheHits = diagnostics.native.decodedCacheHits - nativeBefore.decodedCacheHits;
     return { native, dataset: { release: this.manifest.release, valhallaRevision: this.manifest.valhallaRevision, configSha256: this.manifest.config.sha256, effectiveConfigSha256: this.effectiveConfigSha256 }, diagnostics };
   }
+
+  /** One shared admission path for the native tools that return a non-route response. */
+  private async callTool<T>(name: 'vb_isochrone' | 'vb_optimized_route' | 'vb_matrix', request: unknown, minimumLocations: number): Promise<EngineRoute> {
+    if (!this.initialized) throw new RoutingError('NOT_INITIALIZED', 'Initialize the router first.');
+    const normalized = validateRequest(request, { minimumLocations });
+    if (!this.manifest.costings.includes(normalized.costing))
+      throw new RoutingError('UNSUPPORTED_COSTING', `Dataset ${this.manifest.release} does not support ${normalized.costing}. Available profiles: ${SUPPORTED_COSTINGS.filter(costing => this.manifest.costings.includes(costing)).join(', ')}.`);
+    const [west, south, east, north] = this.manifest.coverage;
+    if (normalized.locations.some((p: { lon: number; lat: number }) => p.lon < west || p.lon > east || p.lat < south || p.lat > north))
+      throw new RoutingError('OUTSIDE_COVERAGE', 'A location is outside this dataset’s coverage.');
+    const start = performance.now();
+    const before = { ...this.loader.metrics };
+    const nativeBefore = await this.call<NativeStats>('vb_stats');
+    this.progress({ phase: 'routing' });
+    const native = await this.call<T>(name, normalized);
+    const diagnostics = { decodedCacheHits: 0, routeMs: performance.now() - start, native: await this.call<NativeStats>('vb_stats'),
+      loader: Object.fromEntries(Object.entries(this.loader.metrics).map(([key, value]) => [key, value - before[key as keyof LoaderMetrics]])) as unknown as LoaderMetrics };
+    diagnostics.decodedCacheHits = diagnostics.native.decodedCacheHits - nativeBefore.decodedCacheHits;
+    return { native, dataset: { release: this.manifest.release, valhallaRevision: this.manifest.valhallaRevision, configSha256: this.manifest.config.sha256, effectiveConfigSha256: this.effectiveConfigSha256 }, diagnostics } as EngineRoute;
+  }
+
+  /** Compute reachability contours around the request's centers. */
+  isochrone(request: unknown): Promise<EngineRoute> { return this.callTool('vb_isochrone', request, 1); }
+  /** Compute a visiting order for the request's locations. */
+  optimizedRoute(request: unknown): Promise<EngineRoute> { return this.callTool('vb_optimized_route', request, 2); }
+  /** Compute times and distances for every source/target pair. */
+  matrix(request: unknown): Promise<EngineRoute> { return this.callTool('vb_matrix', request, 1); }
 
   async diagnostics(): Promise<EngineDiagnostics> {
     if (!this.initialized) throw new RoutingError('NOT_INITIALIZED', 'Initialize the router first.');

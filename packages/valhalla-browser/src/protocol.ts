@@ -7,6 +7,9 @@ export type WorkerOptions = Pick<RouterOptions, 'manifestUrl' | 'transport' | 't
 export interface Operations {
   initialize: { payload: { options: WorkerOptions }; result: Omit<StartupResult, 'workerReadyMs'> };
   route: { payload: { request: NormalizedRequest }; result: Omit<RouteResult, 'diagnostics'> & { diagnostics: Omit<RouteResult['diagnostics'], 'hostRouteMs'> } };
+  isochrone: { payload: { request: NormalizedRequest }; result: Omit<RouteResult, 'diagnostics'> & { diagnostics: Omit<RouteResult['diagnostics'], 'hostRouteMs'> } };
+  optimized_route: { payload: { request: NormalizedRequest }; result: Omit<RouteResult, 'diagnostics'> & { diagnostics: Omit<RouteResult['diagnostics'], 'hostRouteMs'> } };
+  matrix: { payload: { request: NormalizedRequest }; result: Omit<RouteResult, 'diagnostics'> & { diagnostics: Omit<RouteResult['diagnostics'], 'hostRouteMs'> } };
   diagnostics: { payload: Record<string, never>; result: Diagnostics };
 }
 export type WorkerRequest = {

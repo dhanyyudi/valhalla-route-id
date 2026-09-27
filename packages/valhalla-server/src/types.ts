@@ -1,5 +1,5 @@
 import type { Costing, WasmMemoryOptions, EffectiveWasmMemory, EffectiveSearchMemory, LoaderMetrics, NativeStats, NativeRoute, ProgressEvent, RouteResult as BrowserRouteResult, SearchMemoryOptions, TileTrace, TileTransport } from '@tobilg/valhalla-core/types';
-export type { Coordinates, Costing, CostingOptions, BicycleCostingOptions, PedestrianCostingOptions, TruckCostingOptions, RouteProfile, RouteRequest, WasmMemoryOptions, EffectiveWasmMemory, SearchMemoryOptions, EffectiveSearchMemory, NativeRoute, NativeStats, TileTransport, ProgressEvent } from '@tobilg/valhalla-core/types';
+export type { Coordinates, Costing, CostingOptions, BicycleCostingOptions, PedestrianCostingOptions, TruckCostingOptions, RouteProfile, RouteRequest, IsochroneRequest, MatrixRequest, WasmMemoryOptions, EffectiveWasmMemory, SearchMemoryOptions, EffectiveSearchMemory, NativeRoute, NativeStats, TileTransport, ProgressEvent } from '@tobilg/valhalla-core/types';
 
 /** Loader counters with unavailable Cloudflare timing represented explicitly. */
 export interface ServerLoaderMetrics extends Omit<LoaderMetrics, 'sequentialWaitMs'> {
