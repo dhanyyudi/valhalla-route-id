@@ -383,7 +383,9 @@ function GanjilGenap() {
 
       {plan.restricted ? (
         <p data-testid="gage-request" className="mt-1 text-xs">
-          Perkiraan permintaan: exclude_polygons {plan.excludePolygons.length} ring ({(plan.perimeterMeters / 1000).toFixed(1)} km dari batas 10 km per permintaan).
+          {result
+            ? `Untuk rute di atas: exclude_polygons ${plan.excludePolygons.length} ring (${(plan.perimeterMeters / 1000).toFixed(1)} km).`
+            : `Perkiraan permintaan: exclude_polygons ${plan.excludePolygons.length} ring (${(plan.perimeterMeters / 1000).toFixed(1)} km dari batas 10 km per permintaan).`}
           {plan.excluded.length > 0 ? ` Ruas utuh: ${plan.excluded.map(corridor => corridor.name).join(', ')}.` : ''}
           {plan.partial.length > 0
             ? ` Sebagian (bukan seluruh ruas): ${plan.partial.map(entry => `${entry.corridor.name} potongan ${entry.ringIndexes.map(index => index + 1).join('/')}`).join(', ')}.`
@@ -403,7 +405,7 @@ function GanjilGenap() {
         <p data-testid="gage-sent" className="mt-1 text-xs opacity-80">
           Dikirim pada rute terakhir: {gage.excludePolygons.length} ring ({(gage.perimeterMeters / 1000).toFixed(1)} km)
           {gage.partial.length > 0
-            ? ` — sebagian: ${gage.partial.map(entry => entry.corridor.name).join(', ')}`
+            ? ` — sebagian: ${gage.partial.map(entry => `${entry.corridor.name} potongan ${entry.ringIndexes.map(index => index + 1).join('/')}`).join(', ')}`
             : ''}
           {gage.excluded.length > 0 ? ` — utuh: ${gage.excluded.map(corridor => corridor.name).join(', ')}` : ''}.
         </p>

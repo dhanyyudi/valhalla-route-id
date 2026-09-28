@@ -38,6 +38,7 @@ interface RunEvidence {
   gageStatus: string;
   gageReason: string;
   gageRequest: string;
+  gageSent: string;
   crossing: string;
   distance: string;
   duration: string;
@@ -79,6 +80,7 @@ async function readRun(page: import('@playwright/test').Page, label: string): Pr
     gageStatus: await text('gage-status'),
     gageReason: await text('gage-reason'),
     gageRequest: await text('gage-request'),
+    gageSent: await text('gage-sent'),
     crossing: await text('gage-crossing'),
     distance: await text('status-distance'),
     duration: await text('status-duration'),
@@ -155,8 +157,14 @@ async function restrictedThenControl(
   expect(restricted.distance).toMatch(/km$/);
 
   await page.screenshot({ path: testInfo.outputPath(`${label}-restricted.png`) });
-  // What the run actually sent, beside the estimate — the two can differ by design.
-  await expect(page.getByTestId('gage-sent')).toContainText('Dikirim pada rute terakhir');
+  // What the run actually sent, beside the estimate — the two differ by design, because the estimate
+  // is recomputed from the route this run just returned while the request was planned from the
+  // waypoints that preceded it. Asserted together so the record shows both numbers.
+  const sent = ((await page.getByTestId('gage-sent').textContent()) ?? '').trim();
+  const estimate = ((await page.getByTestId('gage-request').textContent()) ?? '').trim();
+  expect(sent).toContain('Dikirim pada rute terakhir');
+  expect(sent).toContain(`${restricted.excludePolygons} ring`);
+  expect(estimate).toContain('Untuk rute di atas');
   console.log(`E2E_RESULT ${JSON.stringify(restricted)}`);
 
   // ── The control run: same scenario, constraint off. ────────────────────────────────────────────
