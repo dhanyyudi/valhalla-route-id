@@ -4,18 +4,16 @@ import { wibInstant } from '../core/gage-request';
 import { parsePointInput } from '../core/point-input';
 import type { TimeMode } from '../core/request-builder';
 import type { PlateParity } from '../core/ganjil-genap';
+import { legFigures } from '../core/leg-timeline';
+import { encodeScenario } from '../core/share-url';
+import { legColor, routeTrack } from '../map/route-layer';
 import { PROFILE_LABELS, PROFILE_OPTIONS, SLOW_PROFILES, useScenario, withPresetHour, type OptionControl } from '../state/scenario';
-import { formatDuration, formatKilometers } from './StatusBar';
+import { formatDuration, formatKilometers, formatShortDuration, formatSpeed } from './format';
+import { copyText } from './Toast';
+import { useTimeline, type Timeline } from './useTimeline';
 
 /** Preset hours offered under the time control, as agreed in the plan. */
 const PRESETS = [6, 7, 12, 17];
-
-const PROGRESS_TEXT: Record<string, string> = {
-  'loading-runtime': 'Memuat mesin Valhalla (WASM)…',
-  'initializing-graph': 'Menyiapkan graf…',
-  'fetching-tile': 'Mengunduh tile graf…',
-  routing: 'Menghitung rute…',
-};
 
 const TIME_MODES: Array<{ mode: TimeMode; label: string }> = [
   { mode: 'now', label: 'Sekarang' },
@@ -50,9 +48,9 @@ export function RoutePanel() {
   const departure = useScenario(state => state.departure);
   const status = useScenario(state => state.status);
   const error = useScenario(state => state.error);
-  const progress = useScenario(state => state.progress);
   const result = useScenario(state => state.result);
   const elapsed = useElapsed(status === 'routing');
+  const timeline = useTimeline();
 
   const slow = SLOW_PROFILES.includes(profile);
   const maneuvers = (result?.native.trip.legs ?? []).flatMap(leg => leg.maneuvers);
@@ -89,13 +87,6 @@ export function RoutePanel() {
           <GanjilGenap />
           <Options key={profile} profile={profile} />
 
-          {status === 'routing' ? (
-            <p data-testid="progress" role="status" className="mt-2 font-bold">
-              {PROGRESS_TEXT[progress?.phase ?? 'routing'] ?? 'Bekerja…'}
-              {progress?.tileId ? ` · tile ${progress.tileId}` : ''} · {formatDuration(elapsed)}
-            </p>
-          ) : null}
-
           {slow ? (
             <p data-testid="route-warning" className="mt-2 border-3 border-nb-black bg-nb-yellow p-2 font-bold">
               Profil {PROFILE_LABELS[profile]} sangat lambat di runtime ini: rute pendek pun bisa melewati batas waktu.
@@ -117,6 +108,8 @@ export function RoutePanel() {
               <p data-testid="result-summary">
                 {formatKilometers(summary.length)} · {formatDuration(summary.time)} · biaya {Math.round(Number(summary.cost ?? 0))}
               </p>
+              {timeline ? <LegTable timeline={timeline} /> : null}
+              <ShareRow />
               <h3 className="nb-title mt-2 text-xs">Petunjuk arah (English)</h3>
               <p className="text-xs opacity-70">
                 Biner WASM ini hanya memuat locale en-US, jadi instruksi selalu bahasa Inggris; seluruh antarmuka tetap Bahasa Indonesia.
@@ -148,7 +141,17 @@ export function RoutePanel() {
               disabled={waypoints.length < 2 || status === 'routing'}
               onClick={() => void useScenario.getState().run()}
             >
-              {status === 'routing' ? 'Menghitung…' : 'Hitung rute'}
+              {status === 'routing' ? `Menghitung… ${formatDuration(elapsed)}` : 'Hitung rute'}
+            </button>
+            <button
+              type="button"
+              data-testid="copy-url"
+              title="Salin URL skenario ini (titik, profil, waktu, ganjil-genap, opsi)"
+              className="nb-button px-2 text-xs"
+              disabled={waypoints.length === 0}
+              onClick={() => void copyText(shareUrl(), 'URL rute')}
+            >
+              🔗 URL
             </button>
             {status === 'routing' ? (
               <button
@@ -171,6 +174,10 @@ function Waypoints() {
   const [text, setText] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const waypoints = useScenario(state => state.waypoints);
+  const timeline = useTimeline();
+  const resultStops = useScenario(state => (state.result ? state.result.native.trip.legs.length + 1 : 0));
+  // Clocks belong to the route on screen: once a stop is added or removed they no longer line up.
+  const times = timeline && resultStops === waypoints.length ? timeline.times : [];
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -212,11 +219,18 @@ function Waypoints() {
       {waypoints.length === 0 ? (
         <p className="mt-1 text-xs opacity-70">Klik peta untuk menambah titik, atau tempel koordinat / tautan Google Maps.</p>
       ) : (
+        <>
+        <p className="mt-1 text-xs opacity-70">Seret marker untuk memindah titik (rute dihitung ulang otomatis) · klik kanan marker untuk menghapus.</p>
         <ol className="mt-1">
           {waypoints.map((point, index) => (
             <li key={`${point.lat},${point.lng},${index}`} className="flex items-center gap-2 border-b-2 border-dashed border-nb-black/30 py-1">
               <span className="nb-badge">{index + 1}</span>
               <span className="font-mono text-xs">{point.lat.toFixed(5)}, {point.lng.toFixed(5)}</span>
+              {times[index] ? (
+                <span data-testid={`waypoint-clock-${index}`} className="nb-chip" title={index === 0 ? 'Waktu berangkat' : index === waypoints.length - 1 ? 'Perkiraan tiba' : 'Perkiraan tiba/lanjut'}>
+                  {index === 0 ? 'berangkat' : 'tiba'} {times[index].clock}
+                </span>
+              ) : null}
               <button
                 type="button"
                 aria-label={`Hapus titik ${index + 1}`}
@@ -229,6 +243,7 @@ function Waypoints() {
             </li>
           ))}
         </ol>
+        </>
       )}
 
       <form className="mt-2 flex gap-1" onSubmit={submit}>
@@ -513,4 +528,92 @@ function NumberOption({ control }: { control: OptionControl }) {
       />
     </label>
   );
+}
+
+/** The inspector's own URL for the current scenario, as `src/core/share-url.ts` encodes it. */
+function shareUrl(): string {
+  const { waypoints, profile, timeMode, departure, plateParity, options } = useScenario.getState();
+  const numeric = Object.fromEntries(Object.entries(options).filter(([, value]) => typeof value !== 'string')) as Record<string, number | boolean>;
+  const query = encodeScenario({ waypoints, profile, timeMode, departure, plateParity, options: numeric });
+  return `${location.origin}${location.pathname}${query ? `?${query}` : ''}`;
+}
+
+/** Distance, time, mean speed and arrival clock for every leg, keyed to the map's leg colours. */
+function LegTable({ timeline }: { timeline: Timeline }) {
+  const { legs, times } = timeline;
+  return (
+    <div className="mt-2 overflow-x-auto">
+      <table data-testid="leg-table" className="w-full border-collapse text-xs [&_td]:px-1 [&_th]:px-1">
+        <thead>
+          <tr className="text-left">
+            <th className="py-0.5 pr-1">Leg</th>
+            <th className="py-0.5 pr-1 text-right">Jarak</th>
+            <th className="py-0.5 pr-1 text-right">Waktu</th>
+            <th className="py-0.5 pr-1 text-right">⌀ Kec.</th>
+            <th className="py-0.5 text-right">Tiba</th>
+          </tr>
+        </thead>
+        <tbody>
+          {legs.map(leg => (
+            <tr key={leg.index} data-testid={`leg-row-${leg.index}`} className="border-t-2 border-dashed border-nb-black/30">
+              <td className="py-0.5 pr-1 font-bold whitespace-nowrap">
+                <span className="mr-1 inline-block h-2.5 w-4 border-2 border-nb-black align-middle" style={{ background: legColor(leg.index) }} aria-hidden="true" />
+                {leg.index + 1}→{leg.index + 2}
+              </td>
+              <td className="py-0.5 pr-1 text-right font-mono whitespace-nowrap">{formatKilometers(leg.lengthKm)}</td>
+              <td className="py-0.5 pr-1 text-right font-mono whitespace-nowrap">{formatShortDuration(leg.timeSeconds)}</td>
+              <td className="py-0.5 pr-1 text-right font-mono whitespace-nowrap">{formatSpeed(leg.speedKmh)}</td>
+              <td className="py-0.5 text-right font-mono font-bold">{times[leg.index + 1]?.clock ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {times.length > 0 ? (
+        <p className="mt-1 text-xs opacity-70">
+          Berangkat {times[0].local.replace('T', ' ')} · jam dihitung dari waktu tempuh native tanpa waktu singgah.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Copy the scenario URL, the exact request JSON, or the route as GeoJSON. */
+function ShareRow() {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      <button type="button" data-testid="copy-url-result" className="nb-button min-h-0 px-2 py-1 text-xs" onClick={() => void copyText(shareUrl(), 'URL rute')}>
+        Salin URL rute
+      </button>
+      <button
+        type="button"
+        data-testid="copy-request"
+        className="nb-button min-h-0 px-2 py-1 text-xs"
+        onClick={() => void copyText(JSON.stringify(window.valhallaLastRequest?.() ?? null, null, 2), 'JSON permintaan Valhalla')}
+      >
+        Salin JSON permintaan
+      </button>
+      <button type="button" data-testid="copy-geojson" className="nb-button min-h-0 px-2 py-1 text-xs" onClick={() => void copyText(routeGeoJson(), 'GeoJSON rute')}>
+        Salin GeoJSON
+      </button>
+    </div>
+  );
+}
+
+/** The route on screen as a FeatureCollection: one LineString per leg, one Point per stop. */
+function routeGeoJson(): string {
+  const { result, waypoints } = useScenario.getState();
+  if (!result) return '';
+  const track = routeTrack(result);
+  const legs = legFigures(result);
+  return JSON.stringify({
+    type: 'FeatureCollection',
+    features: [
+      ...track.legs.map((leg, index) => ({
+        type: 'Feature',
+        properties: { leg: index + 1, color: legColor(index), length_km: legs[index]?.lengthKm, time_s: legs[index]?.timeSeconds },
+        geometry: { type: 'LineString', coordinates: leg.coordinates },
+      })),
+      ...waypoints.map((point, index) => ({ type: 'Feature', properties: { waypoint: index + 1 }, geometry: { type: 'Point', coordinates: [point.lng, point.lat] } })),
+    ],
+  });
 }

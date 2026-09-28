@@ -20,12 +20,27 @@ from CARTO, which is third-party traffic on every page load (see [Attribution](#
 - Route now, depart at, or arrive by a time in the dataset's local time, with quick hour presets.
 - Tune the costing options that profile exposes — top speed, highways, tolls, ferries, trails, and
   truck dimensions/weight/hazmat.
-- Watch progress while tiles are read, cancel a long route, and then read the distance, duration,
-  simulated departure/arrival time, dataset release, bytes fetched and decoded geometry from the
-  status bar and the map.
+- Drag a waypoint marker to move it: the route is recalculated as soon as it is dropped (a drag
+  during a running route waits for that route rather than cancelling it and its tile cache).
+  Right-click a marker to remove it.
+- Watch the routing loader step through the WASM runtime, the graph index and the route search,
+  with the graph tiles read so far, and cancel a long route. The **process log** beside the map lists
+  every phase and tile the worker reports plus the loader, cache and heap counters each route
+  returns, and can be copied.
+- Read the result on the map: one colour per leg, a start/arrival clock on every waypoint, and an
+  optional per-leg label (speed, ETA or both). The route is traced from the first stop to the last,
+  timed by native's own maneuver times, with a simulated clock; replay it or turn it off.
+- Read the distance, duration, simulated departure/arrival time, dataset release, bytes fetched and
+  decoded geometry from the status bar, and a per-leg table (distance, time, mean speed, arrival).
+- Share a scenario: the address bar always carries it (`?wp=lat,lng;lat,lng&profile=…&time=…&at=…
+  &plate=…&opt=…`), a link with two or more stops routes on open, and the panel copies the link, the
+  exact Valhalla request JSON or the route as GeoJSON.
 - Apply the Jakarta **ganjil-genap** (odd-even) constraint: pick `Ganjil`, `Genap` or `Nonaktif`, and
   when the rule bites, the request carries `exclude_polygons` so Valhalla routes around the
   restricted corridors — and the panel says afterwards which corridors the route still crosses.
+  On the map each corridor is a tinted, hatched buffer with a dashed edge, a glowing centre-line and
+  its street name, and a dot at low zoom: red while the last route was asked to avoid it, yellow
+  otherwise. Hover a corridor for its rule; the legend beside the map can hide the layer or zoom to it.
 
 ## Ganjil-genap constraint
 
@@ -264,6 +279,10 @@ equality rule and the per-case outcome, is in
 e2e/                       Playwright acceptance route and the decoded-tile cache measurement,
                            both against a live deployment
 src/                       the SPA: map, route panel, status bar, scenario state, ganjil-genap rules
+src/core/leg-timeline.ts   per-leg figures and per-waypoint clock times
+src/core/share-url.ts      the scenario as query parameters, both ways
+src/state/process-log.ts   the process log and the loader's per-run counters
+src/state/view.ts          display-only preferences (leg labels, animation, auto-route, corridors)
 src/data/gage-polygons.json  generated corridor rings (pnpm build:gage), committed
 data/                      ganjil-genap corridor source data, committed with its _meta provenance
 packages/valhalla-core/    request validation, costing profiles, tile store and loader

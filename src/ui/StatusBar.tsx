@@ -1,24 +1,7 @@
 import { PROFILE_LABELS, useScenario } from '../state/scenario';
 
-/** `1 j 56 mnt 43 dtk`, from native's fractional seconds. */
-export function formatDuration(seconds: number): string {
-  const total = Math.round(seconds);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const rest = total % 60;
-  return [hours ? `${hours} j` : '', minutes ? `${minutes} mnt` : '', `${rest} dtk`].filter(Boolean).join(' ');
-}
-
-/** Kilometres with Indonesian thousands/decimal separators. */
-export function formatKilometers(kilometers: number): string {
-  return `${kilometers.toLocaleString('id-ID', { maximumFractionDigits: 3 })} km`;
-}
-
-/** Byte counts in the units the SDK reports them in, with the exact value kept. */
-export function formatBytes(bytes: number): string {
-  const mb = bytes / 1024 / 1024;
-  return `${mb.toLocaleString('id-ID', { maximumFractionDigits: 1 })} MB (${bytes.toLocaleString('id-ID')} B)`;
-}
+export { formatBytes, formatDuration, formatKilometers } from './format';
+import { formatBytes, formatDuration, formatKilometers } from './format';
 
 export interface StatusBarProps {
   /** Coordinates the route layer holds after the last draw; null before the first route. */

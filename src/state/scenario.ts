@@ -6,8 +6,12 @@ import { findCorridorCrossings, type CrossingReport } from '../core/gage-crossin
 import { type LngLat } from '../core/gage-geometry';
 import { type PlateParity } from '../core/ganjil-genap';
 import { BUFFER_METERS, CORRIDORS } from '../core/gage-corridors';
+import type { RunClock } from '../core/leg-timeline';
+import type { SharedScenario } from '../core/share-url';
 import { routeCoordinates } from '../map/route-layer';
 import { createRouteClient, installLastRequestHook, type RouteClient } from '../router/client';
+import { formatBytes, formatDuration, formatKilometers } from '../ui/format';
+import { useProcessLog } from './process-log';
 
 export type OptionValue = number | boolean | string;
 
@@ -92,7 +96,13 @@ export interface ScenarioState {
   gage: GagePlan | null;
   /** Corridors the returned route still runs through; null before the first route. */
   crossings: CrossingReport | null;
+  /** The time control as it was when `result` was requested, so waypoint clocks match the route. */
+  resultClock: RunClock | null;
+  /** A run asked for while another was in progress; it starts as soon as that one settles. */
+  rerunQueued: boolean;
   addWaypoint(point: Waypoint): void;
+  /** Move one stop, e.g. after its marker was dragged. */
+  moveWaypoint(index: number, point: Waypoint): void;
   removeWaypoint(index: number): void;
   reverseWaypoints(): void;
   clearWaypoints(): void;
@@ -102,7 +112,15 @@ export interface ScenarioState {
   setPlateParity(plateParity: PlateParity): void;
   /** Re-derive the constraint plan from the current state, for the panel's live status line. */
   gagePlan(): GagePlan;
+  /** Seed the scenario from a shared link; fields the link did not carry keep their defaults. */
+  hydrate(shared: Partial<SharedScenario>): void;
   run(): Promise<void>;
+  /**
+   * Run now, or once the route in progress settles.
+   * @remarks Used by the auto-route on drag: cancelling a running route terminates the worker and
+   *   drops its tile cache, so a drag during a cold route waits for it instead of throwing it away.
+   */
+  requestRun(): void;
   cancel(): void;
 }
 
@@ -172,6 +190,8 @@ installLastRequestHook(() => lastRequest);
 const MANIFEST_URL: string | undefined = import.meta.env.VITE_MANIFEST_URL;
 
 let client: RouteClient | undefined;
+/** Whether the session's startup measurements were logged already; they are read once. */
+let startupLogged = false;
 
 /**
  * The application's single SDK session, created on first use.
@@ -179,10 +199,16 @@ let client: RouteClient | undefined;
  */
 function routeClient(): RouteClient | undefined {
   if (!MANIFEST_URL) return undefined;
+  if (!client) useProcessLog.getState().push('info', 'Membuat sesi Valhalla: Web Worker + modul WASM (sekali per sesi).');
   return (client ??= createRouteClient(MANIFEST_URL, {
-    onProgress: event => useScenario.setState({ progress: event }),
+    onProgress: event => {
+      useScenario.setState({ progress: event });
+      useProcessLog.getState().progress(event);
+    },
   }));
 }
+
+const log = (...args: Parameters<ReturnType<typeof useProcessLog.getState>['push']>) => useProcessLog.getState().push(...args);
 
 export const useScenario = create<ScenarioState>((set, get) => ({
   waypoints: [],
@@ -197,11 +223,18 @@ export const useScenario = create<ScenarioState>((set, get) => ({
   progress: null,
   gage: null,
   crossings: null,
+  resultClock: null,
+  rerunQueued: false,
 
   addWaypoint(point) {
     const { waypoints } = get();
     if (waypoints.length >= MAX_WAYPOINTS) return;
     set({ waypoints: [...waypoints, point] });
+  },
+  moveWaypoint(index, point) {
+    const { waypoints } = get();
+    if (index < 0 || index >= waypoints.length) return;
+    set({ waypoints: waypoints.map((existing, position) => (position === index ? { ...existing, lng: point.lng, lat: point.lat } : existing)) });
   },
   removeWaypoint(index) {
     set({ waypoints: get().waypoints.filter((_, position) => position !== index) });
@@ -234,6 +267,27 @@ export const useScenario = create<ScenarioState>((set, get) => ({
   gagePlan() {
     return gagePlanFrom(get());
   },
+  hydrate(shared) {
+    const next: Partial<ScenarioState> = {};
+    if (shared.waypoints) next.waypoints = shared.waypoints.slice(0, MAX_WAYPOINTS);
+    if (shared.timeMode) next.timeMode = shared.timeMode;
+    if (shared.departure) next.departure = shared.departure;
+    if (shared.plateParity) next.plateParity = shared.plateParity;
+    set(next);
+    // Through `setProfile`, so options the profile does not accept are dropped exactly as a click would.
+    if (shared.options) set({ options: { ...shared.options } });
+    if (shared.profile) get().setProfile(shared.profile);
+    else get().setProfile(get().profile);
+  },
+  requestRun() {
+    if (get().waypoints.length < 2) return;
+    if (get().status === 'routing') {
+      if (!get().rerunQueued) log('info', 'Titik berubah saat rute berjalan: rute dihitung ulang begitu yang ini selesai.');
+      set({ rerunQueued: true });
+      return;
+    }
+    void get().run();
+  },
   async run() {
     const { waypoints, profile, timeMode, departure, options } = get();
     if (waypoints.length < 2) {
@@ -256,29 +310,54 @@ export const useScenario = create<ScenarioState>((set, get) => ({
       set({ status: 'error', error: { code: 'INVALID_REQUEST', message: gage.refusal ?? 'Waktu tidak terbaca.' } });
       return;
     }
-    set({ status: 'routing', error: null, progress: null, gage });
+    const clock: RunClock = { timeMode, departure, startedAt: new Date() };
+    set({ status: 'routing', error: null, progress: null, gage, rerunQueued: false });
     const request = buildRouteRequest({
       waypoints, profile, timeMode, departure, options,
       ...(gage.excludePolygons.length > 0 ? { excludePolygons: gage.excludePolygons } : {}),
     });
     lastRequest = request;
+    const processLog = useProcessLog.getState();
+    processLog.beginRun();
+    log('info', [
+      `Permintaan rute: ${waypoints.length} titik · costing ${profile}`,
+      timeMode === 'now' ? 'tanpa date_time (sekarang)' : `date_time ${timeMode === 'depart' ? 'depart_at' : 'arrive_by'} ${departure}`,
+      Object.keys(options).length > 0 ? `opsi ${Object.entries(options).map(([key, value]) => `${key}=${String(value)}`).join(', ')}` : 'opsi bawaan',
+      gage.excludePolygons.length > 0 ? `exclude_polygons ${gage.excludePolygons.length} ring` : 'tanpa exclude_polygons',
+    ].join(' · '));
     try {
       const result = await active.route(request);
-      set({
-        result,
-        status: 'done',
-        error: null,
-        progress: null,
-        crossings: findCorridorCrossings(routeCoordinates(result), CORRIDORS),
-      });
+      const crossings = findCorridorCrossings(routeCoordinates(result), CORRIDORS);
+      const { summary } = result.native.trip;
+      const { loader, native } = result.diagnostics;
+      log('ok', `Rute selesai: ${formatKilometers(summary.length)} · ${formatDuration(summary.time)} · ${result.native.trip.legs.length} leg · native ${Math.round(result.diagnostics.routeMs).toLocaleString('id-ID')} ms (host ${Math.round(result.diagnostics.hostRouteMs).toLocaleString('id-ID')} ms)`);
+      log('info', `Loader: ${loader.tileDownloads} tile diunduh · ${loader.requests} fetch · ${formatBytes(loader.bytes)} · tunggu ${Math.round(loader.sequentialWaitMs).toLocaleString('id-ID')} ms · dedup ${loader.deduplicated} · retry ${loader.retries}`);
+      log('info', `Cache tile ter-decode: ${result.diagnostics.decodedCacheHits} hit · ${formatBytes(native.decodedCacheBytes)} tertahan · heap WASM puncak ${formatBytes(native.wasmHeapCapacityHighWaterBytes)}`);
+      if (crossings.count > 0) log('warn', `Ganjil-genap: geometri masih melintasi ${crossings.count} koridor: ${crossings.corridors.map(corridor => corridor.name).join(', ')}.`);
+      set({ result, status: 'done', error: null, progress: null, crossings, resultClock: clock });
+      if (!startupLogged) {
+        startupLogged = true;
+        const startup = await active.startup();
+        if (startup) {
+          log('info', `Startup sesi: modul WASM ${Math.round(startup.moduleStartupMs).toLocaleString('id-ID')} ms · graf ${Math.round(startup.graphStartupMs).toLocaleString('id-ID')} ms · worker siap ${Math.round(startup.workerReadyMs).toLocaleString('id-ID')} ms · rilis ${startup.release}`);
+        }
+      }
     } catch (error) {
       const failure = toRouteFailure(error);
-      set({ status: failure.code === 'CANCELLED' ? 'cancelled' : 'error', error: failure, progress: null, crossings: null });
+      const cancelled = failure.code === 'CANCELLED';
+      log(cancelled ? 'warn' : 'error', `${failure.code}${failure.nativeCode === undefined ? '' : ` (native ${failure.nativeCode})`}: ${failure.message}`);
+      set({ status: cancelled ? 'cancelled' : 'error', error: failure, progress: null, crossings: null });
+    } finally {
+      processLog.endRun();
+    }
+    if (get().rerunQueued && get().status !== 'cancelled') {
+      set({ rerunQueued: false });
+      void get().run();
     }
   },
   cancel() {
     if (get().status !== 'routing') return;
-    set({ status: 'cancelled', error: { code: 'CANCELLED', message: 'Rute dibatalkan.' }, progress: null });
+    set({ status: 'cancelled', error: { code: 'CANCELLED', message: 'Rute dibatalkan.' }, progress: null, rerunQueued: false });
     client?.cancel();
   },
 }));

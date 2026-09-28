@@ -62,3 +62,163 @@ html, body, #root { height: 100%; margin: 0; background: var(--color-nb-cream); 
   }
   .nb-title { font-family: var(--font-display); letter-spacing: 0.02em; text-transform: uppercase; }
 }
+
+/* ---- Routing loader ---------------------------------------------------------------------- */
+@layer components {
+  .nb-loader { animation: nb-drop 220ms cubic-bezier(.34, 1.56, .64, 1); }
+  .nb-toast { animation: nb-drop 200ms cubic-bezier(.34, 1.56, .64, 1); }
+  .nb-step {
+    position: relative;
+    border: 3px solid var(--color-nb-black);
+    background: #ffffff;
+    padding: 0.35rem 0.4rem 0.35rem 2rem;
+    font-size: 0.72rem;
+    min-height: 3.1rem;
+  }
+  .nb-step-icon {
+    position: absolute;
+    left: 0.35rem;
+    top: 0.4rem;
+    display: grid;
+    place-items: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 2px solid var(--color-nb-black);
+    background: var(--color-nb-cream);
+    font-weight: 700;
+    font-size: 0.7rem;
+  }
+  .nb-step[data-state='done'] { background: #e3f1e7; }
+  .nb-step[data-state='done'] .nb-step-icon { background: var(--color-nb-green); color: #ffffff; }
+  .nb-step[data-state='active'] { background: var(--color-nb-yellow); box-shadow: 3px 3px 0 var(--color-nb-black); }
+  .nb-step[data-state='active'] .nb-step-icon {
+    border-color: var(--color-nb-black);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: nb-spin 0.7s linear infinite;
+  }
+  .nb-step[data-state='pending'] { opacity: 0.55; }
+  .nb-bar {
+    position: relative;
+    height: 0.8rem;
+    border: 3px solid var(--color-nb-black);
+    background: #ffffff;
+    overflow: hidden;
+  }
+  .nb-bar > span {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 40%;
+    background: repeating-linear-gradient(-45deg, var(--color-nb-terracotta) 0 8px, var(--color-nb-yellow) 8px 16px);
+    animation: nb-slide 1.3s ease-in-out infinite;
+  }
+  .nb-glyph-road { animation: nb-dash 0.6s linear infinite; }
+
+  /* ---- Process log ----------------------------------------------------------------------- */
+  .nb-terminal { background: #15171a; }
+  .nb-log-line { white-space: pre-wrap; word-break: break-word; }
+  .nb-log-line:last-child { animation: nb-fade 240ms ease-out; }
+  .nb-dot {
+    width: 0.65rem;
+    height: 0.65rem;
+    border: 2px solid var(--color-nb-black);
+    background: #9e9e9e;
+    border-radius: 50%;
+  }
+  .nb-dot.is-live { background: var(--color-nb-green); animation: nb-pulse 1s ease-in-out infinite; }
+
+  .nb-chip {
+    margin-left: auto;
+    border: 2px solid var(--color-nb-black);
+    background: #ffffff;
+    padding: 0 0.3rem;
+    font: 700 0.68rem/1.4 var(--font-sans);
+    white-space: nowrap;
+  }
+  .nb-chip + button { margin-left: 0.25rem; }
+  .nb-hatch {
+    width: 2rem;
+    height: 2rem;
+    flex-shrink: 0;
+    border: 3px dashed var(--hatch);
+    outline: 2px solid var(--color-nb-black);
+    background: repeating-linear-gradient(-45deg, var(--hatch) 0 3px, transparent 3px 7px), color-mix(in srgb, var(--hatch) 25%, #1b1b1b);
+  }
+
+  /* ---- Map markers ----------------------------------------------------------------------- */
+  .wp-marker {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    cursor: grab;
+  }
+  .wp-marker.is-dragging { cursor: grabbing; }
+  .wp-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--color-nb-black);
+    background: var(--color-nb-yellow);
+    color: var(--color-nb-black);
+    font: 700 14px/1 var(--font-sans);
+    box-shadow: 3px 3px 0 var(--color-nb-black);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .wp-marker:hover .wp-badge { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--color-nb-black); }
+  .wp-marker.is-dragging .wp-badge { transform: scale(1.18) rotate(-4deg); box-shadow: 6px 6px 0 var(--color-nb-black); }
+  .wp-marker.is-busy .wp-badge { animation: nb-ring 1.1s ease-out infinite; }
+  .wp-time {
+    border: 2px solid var(--color-nb-black);
+    background: var(--color-nb-cream);
+    padding: 0 4px;
+    font: 700 11px/1.35 var(--font-sans);
+    white-space: nowrap;
+    box-shadow: 2px 2px 0 var(--color-nb-black);
+    pointer-events: none;
+  }
+  .leg-label {
+    pointer-events: none;
+    border: 2px solid var(--color-nb-black);
+    border-left: 8px solid var(--leg-color);
+    background: var(--color-nb-cream);
+    color: var(--color-nb-black);
+    padding: 1px 6px;
+    font: 700 11px/1.4 var(--font-sans);
+    white-space: nowrap;
+    box-shadow: 3px 3px 0 var(--color-nb-black);
+    animation: nb-fade 300ms ease-out;
+  }
+  .gage-popup .maplibregl-popup-content {
+    border: 3px solid var(--color-nb-black);
+    border-radius: 0;
+    background: var(--color-nb-cream);
+    box-shadow: 4px 4px 0 var(--color-nb-black);
+    padding: 6px 8px;
+    font: 12px/1.35 var(--font-sans);
+  }
+  .gage-popup .maplibregl-popup-content span { opacity: 0.7; }
+}
+
+/* MapLibre's bottom controls (scale, attribution) sit above the status bar instead of under it. */
+.maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left { bottom: 4.5rem; }
+@media (min-width: 768px) {
+  .maplibregl-ctrl-bottom-right { right: 25rem; }
+  .maplibregl-ctrl-top-right { right: 25rem; }
+}
+
+@keyframes nb-spin { to { transform: rotate(360deg); } }
+@keyframes nb-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(260%); } }
+@keyframes nb-dash { to { stroke-dashoffset: -8; } }
+@keyframes nb-drop { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes nb-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nb-pulse { 50% { transform: scale(1.35); } }
+@keyframes nb-ring {
+  0% { box-shadow: 3px 3px 0 var(--color-nb-black), 0 0 0 0 rgba(242, 193, 78, 0.8); }
+  100% { box-shadow: 3px 3px 0 var(--color-nb-black), 0 0 0 14px rgba(242, 193, 78, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nb-bar > span, .nb-glyph-road, .nb-dot.is-live, .wp-marker.is-busy .wp-badge, .nb-step[data-state='active'] .nb-step-icon { animation: none; }
+}
