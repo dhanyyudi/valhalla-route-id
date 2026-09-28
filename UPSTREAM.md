@@ -111,12 +111,24 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
    `process.env.VALHALLA_TEST_PORT` (default 8790, upstream's fixed value) because 8790 is also the
    port `tools/verify/compare.mjs` serves the Indonesia release on, so `pnpm test` could not bind
    while a corpus run was in flight. `VALHALLA_TEST_PORT=8791 pnpm test` runs both side by side.
+11. `packages/valhalla-core/src/engine.ts` — the decoded-tile cache ceiling is raised from 128 MiB
+   to 512 MiB; only the bound and the number in the error message change
+   (`Memory budget must be between 1 KiB and 512 MiB.`), and the 1 KiB lower bound, the
+   largest-single-tile check and every other rule stay as upstream wrote them. The Indonesia graph
+   has tiles of 48,442,160 B and 37,395,280 B, so a 128 MiB ceiling caps the retained working set at
+   about two of them: the deployed build re-read the same four Jakarta tiles 150 times on a 24.5 km
+   route and reported 3,459,976,392 B of graph bytes in 503.7 s, because Valhalla's `TileCacheLRU`
+   evicts what it cannot keep and the next expansion asks for it again. The ceiling is a validation
+   bound, not an allocation — a caller that keeps the 32 MiB default sees no change, and the cache
+   still lives inside the `wasmMemory` heap ceiling the caller chose. The application
+   (`src/router/client.ts`) asks for 384 MiB, overridable at build time with
+   `VITE_MEMORY_BUDGET_MIB` so budget comparisons need no code edit.
 
 ## Rebasing on a newer upstream release
 
     git clone https://github.com/tobilg/valhalla-wasm /tmp/valhalla-wasm-next
     git -C /tmp/valhalla-wasm-next checkout <new tag>
-    # re-copy the same paths, then re-apply the ten divergences above
+    # re-copy the same paths, then re-apply the eleven divergences above
     pnpm install && pnpm test && pnpm run build:sdk && pnpm run smoke
 
 Never take a new upstream release without rebuilding the Indonesia dataset with

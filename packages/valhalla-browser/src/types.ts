@@ -7,7 +7,7 @@ export interface RouterOptions {
   manifestUrl: string;
   /** Tile delivery backend. Defaults to `indexed-tar`. */
   transport?: TileTransport;
-  /** Retained decoded-tile cache budget in bytes: 1 KiB–128 MiB, default 32 MiB. Must fit the dataset's largest tile. This is not a total-worker memory limit. */
+  /** Retained decoded-tile cache budget in bytes: 1 KiB–512 MiB, default 32 MiB. Must fit the dataset's largest tile. This is not a total-worker memory limit. */
   memoryBudgetBytes?: number;
   /** Search-label reservations and cleanup policy. Omitted fields use SDK defaults, independently of the decoded-tile cache budget. Changes take effect on the next initialization. */
   searchMemory?: SearchMemoryOptions;

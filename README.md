@@ -37,13 +37,40 @@ One Cloudflare Worker is the whole backend:
 
 The browser asks for the release manifest, learns every tile's offset, length and ETag, then reads
 the byte ranges it needs straight out of the archive. Those responses are immutable for a year, so
-the browser's own HTTP cache holds them and a second route should fetch far less than the first —
-expected, not measured. The SDK's decoded-tile cache is a working set, not a copy of the graph: it
-is capped at 96 MiB, and the release's distinct ranges total roughly 207 MiB.
+the browser's HTTP cache can replay them — but that is not what makes a route cheap. The decoded-tile
+cache is: Valhalla keeps tiles in a budgeted LRU and re-reads whatever it evicted, so the budget has
+to cover a route's whole working set, not merely its largest tile.
 
-The tile cache is explicitly budgeted: the app requests **96 MiB** (`memoryBudgetBytes`
-100663296) because the largest tile in this release is 48,442,160 B. The SDK's 32 MiB default
-refuses to initialise against this dataset at all.
+Measured against the deployed Worker with `e2e/cache-budget.spec.ts` — one 24.5 km Jakarta route,
+`auto`, `-6.18330, 106.78038` → `-6.19860, 106.87630`, cold browser cache, `router.diagnostics()`
+read after the result:
+
+| Build | Wall time | Graph bytes | Tile reads | Distinct tiles | WASM heap high-water |
+| --- | --- | --- | --- | --- | --- |
+| 96 MiB budget, 512 MiB heap (previous deployment) | 503.7 s (second run of the same build: 309.1 s) | 3,459,976,392 B | **146** | 4 | 184.4 MiB |
+| 384 MiB budget, 1024 MiB heap (current) | 16.2 s (re-run: 14.7 s) | 101,346,424 B | **4** | 4 | 153.6 MiB |
+
+The same four tiles cost 101,346,424 B when each is read once. That working set is 683,128 B larger
+than the 96 MiB the app used to request, so the cache could never hold it: every tile Valhalla
+evicted was one the next expansion asked for again — 146 downloads for four tiles, and the search
+did the same work either way (153,108 native cache hits before, 153,250 after). At 384 MiB the route
+reads each tile exactly once, ends the route with all 101,346,424 B still decoded, and peaks at
+153.6 MiB of heap instead of 184.4 MiB, because it no longer decodes four tiles 146 times. The
+wall-time spread between two runs of the *same* build on this link is itself minutes, so the byte
+and tile-read counts are the stable measurement, not the seconds.
+
+The heap ceiling is 1024 MiB rather than the SDK's browser default of 512 MiB, because a 384 MiB
+cache plus a long search's own labels can exceed 512 MiB: a Jakarta → Bandung `bicycle` route
+(~165 km, 48 tiles, 413,159,328 B) failed after 44.9 s with
+`RESOURCE_LIMIT: Native routing exhausted its WASM memory budget.` at the 512 MiB default and
+completes in 65.5 s with a 683 MiB heap high-water once the ceiling is raised. The short routes
+above never approach it, and linear memory only grows on demand.
+
+The tile cache is explicitly budgeted: the app requests **384 MiB** (`memoryBudgetBytes` 402653184),
+overridable at build time with `VITE_MEMORY_BUDGET_MIB` (the vendored engine's ceiling is 512 MiB).
+The largest tile in this release is 48,442,160 B, so the SDK's 32 MiB default refuses to initialise
+against this dataset at all. See divergence 11 in [`UPSTREAM.md`](UPSTREAM.md) for why the ceiling
+had to move.
 
 ## Run it locally
 
@@ -101,6 +128,18 @@ pnpm test:e2e        # Playwright acceptance route; needs a running deployment
 (default: the live URL) and, on machines where the bundled browser download is unavailable, accepts
 `E2E_CHANNEL=chrome` to drive an installed Google Chrome instead.
 
+`e2e/cache-budget.spec.ts` is the cache measurement behind the table above: it routes one pair,
+records the wall time, the reported graph bytes, `router.diagnostics()` and the tile ids the
+progress line shows, and writes its evidence to `.superpowers/measurements/<label>.json`.
+`E2E_PROFILE`, `E2E_START`, `E2E_END` and `E2E_LABEL` select the case, for example:
+
+```bash
+E2E_CHANNEL=chrome E2E_LABEL=after-auto npx playwright test e2e/cache-budget.spec.ts
+```
+
+`VITE_MEMORY_BUDGET_MIB` rebuilds the app with a different decoded-tile cache budget so two budgets
+can be compared without editing code (`VITE_MEMORY_BUDGET_MIB=96 pnpm build`).
+
 ## The dataset
 
 | | |
@@ -127,28 +166,38 @@ serialised text, with no key reordering and no number fiddling.
 **14 of the 16 requests are byte-identical.** The two exceptions are `bicycle` and `pedestrian`
 against the SDK's own 300-second operation deadline: both are *timeouts inside the host*, not engine
 disagreements — the WASM engine never produced an answer to compare, and native answered the same
-requests instantly. Zero disagreements were classified. Full detail, including the equality rule and
-the per-case outcome, is in
+requests instantly. Zero disagreements were classified. Those two timeouts were measured against the
+96 MiB cache budget this repository shipped at the time and are the reason the budget moved: with
+384 MiB of cache and a 1024 MiB heap the same `jakarta-bandung-bicycle` request, driven through the
+SDK's own Node worker at the corpus's settings, completes in 2.5 s (413,159,328 B read, 683 MiB heap
+high-water) instead of exhausting either the cache or the deadline. Full detail, including the
+equality rule and the per-case outcome, is in
 [`docs/datasets/indonesia-260926-eab7ae90e4197185-verification.md`](docs/datasets/indonesia-260926-eab7ae90e4197185-verification.md).
 
 ## Known limitations
 
 - **Instructions are in English.** The UI is in Bahasa Indonesia, but the shipped WASM binary
   carries only the `en-US` locale, so manoeuvre text ("Turn right onto Jalan …") stays English.
-- **`bicycle` and `pedestrian` are slow, and `bicycle` may not finish.** An 11 km bicycle route
-  exceeds the SDK's 300-second operation deadline, where the native binary answers instantly; an
-  11 km pedestrian route took 56 s against 88 s for a 156 km car route. Both profiles are marked
-  🐌 in the UI and are interruptible, but treat bicycle routing from this runtime build as
-  unreliable.
-- **A 96 MiB tile budget is required.** The browser build asks the SDK for 96 MiB of decoded-tile
-  cache; the two largest tiles in this release are 46.2 MiB and 35.7 MiB, so the SDK's 32 MiB
-  default cannot even initialise. A device that cannot spare that memory will fail to load.
+- **`pedestrian` is still unmeasured; `bicycle` no longer times out.** The corpus timeout recorded
+  for an 11 km bicycle route was taken with a 96 MiB cache. Re-measured on the deployed build, a
+  24.5 km bicycle route takes 16.2 s and the 165 km `jakarta-bandung-bicycle` case 65.5 s — both
+  inside the 300 s deadline. The UI still marks `bicycle` and `pedestrian` 🐌; that marker now
+  overstates `bicycle`'s cost, and `pedestrian` has not been re-measured since the budget changed.
+- **A 384 MiB tile budget and a 1024 MiB heap ceiling are required.** The browser build asks the SDK
+  for 384 MiB of decoded-tile cache inside a WASM heap whose maximum is 1024 MiB rather than the
+  adapter's 512 MiB default. The four tiles of a single 24.5 km Jakarta route already total
+  101,346,424 B, so a smaller budget does not fail — it thrashes, re-reading what it evicted (96 MiB
+  measured 146 reads for those same four tiles), and a 512 MiB heap fails outright on the long
+  bicycle route (`RESOURCE_LIMIT`, measured at 44.9 s). A device that cannot spare the memory will
+  be slow or fail on the longest routes rather than quietly wrong.
 - **Indonesia only.** Coverage is the release above; there is no global graph.
-- **A cold first route is heavy.** It can read a few hundred megabytes of ranges out of the 2 GB
-  archive, and has been measured at 79–101 s for the largest (48 MB) tile on a congested link.
-  Later routes should be cheaper because the browser's HTTP cache keeps the immutable dataset
-  responses, not because the app caches tiles in memory: the decoded-tile cache is capped at 96 MiB
-  against roughly 207 MiB of distinct ranges.
+- **A cold first route is heavy, and now bounded by the working set.** The measured 24.5 km Jakarta
+  route reads 101,346,424 B out of the 2 GB archive in 16.2 s on a cold browser cache, and the
+  Jakarta → Bandung acceptance route (`motorcycle`, 07:00) 207,897,560 B in 36.1 s — against
+  369,466,864 B in 46.1 s for the same acceptance route before the change. Before the cache budget
+  was raised, the short route reported 3,459,976,392 B and took 309–504 s. A later route is cheaper
+  only in that the browser's HTTP cache can replay immutable responses; the decoded-tile cache is
+  what prevents the re-reads.
 
 ## Attribution
 
@@ -170,7 +219,8 @@ the per-case outcome, is in
 
 ```
 .github/workflows/ci.yml   verify on every push and PR; deploy + acceptance on main
-e2e/                       Playwright acceptance route against a live deployment
+e2e/                       Playwright acceptance route and the decoded-tile cache measurement,
+                           both against a live deployment
 src/                       the SPA: map, route panel, status bar, scenario state
 packages/valhalla-core/    request validation, costing profiles, tile store and loader
 packages/valhalla-browser/ the WASM runtime packaged for the browser

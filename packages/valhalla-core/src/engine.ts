@@ -104,7 +104,7 @@ export class Engine {
     this.config = JSON.parse(new TextDecoder().decode(configBytes));
     this.config.mjolnir.tile_url = this.loader.transport === 'indexed-tar' ? this.loader.archiveUrl : new URL('tiles/{tilePath}', manifestUrl).href.replace('%7BtilePath%7D', '{tilePath}');
     const budget = options.memoryBudgetBytes ?? 32 * 1024 * 1024;
-    if (!Number.isSafeInteger(budget) || budget < 1024 || budget > 128 * 1024 * 1024) throw new RoutingError('INVALID_REQUEST', 'Memory budget must be between 1 KiB and 128 MiB.');
+    if (!Number.isSafeInteger(budget) || budget < 1024 || budget > 512 * 1024 * 1024) throw new RoutingError('INVALID_REQUEST', 'Memory budget must be between 1 KiB and 512 MiB.');
     // The upstream hard LRU throws for an oversized single tile. Loki can swallow
     // that exception as a failed correlation, so reject the configuration explicitly.
     if ([...this.loader.byRange.values()].some(tile => tile.size > BigInt(budget)))
