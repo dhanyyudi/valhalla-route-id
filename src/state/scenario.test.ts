@@ -20,6 +20,40 @@ describe('scenario store', () => {
     expect(useScenario.getState().waypoints).toEqual([]);
   });
 
+  it('moves one waypoint and keeps the others', () => {
+    useScenario.getState().addWaypoint({ lat: -6.1754, lng: 106.8272, label: 'Monas' });
+    useScenario.getState().addWaypoint({ lat: -6.9175, lng: 107.6191 });
+    useScenario.getState().moveWaypoint(0, { lat: -6.2, lng: 106.9 });
+    useScenario.getState().moveWaypoint(5, { lat: 0, lng: 0 });
+    expect(useScenario.getState().waypoints).toEqual([{ lat: -6.2, lng: 106.9, label: 'Monas' }, { lat: -6.9175, lng: 107.6191 }]);
+  });
+
+  it('queues a run asked for while one is in progress instead of cancelling it', () => {
+    useScenario.setState({ waypoints: [{ lat: -6.1, lng: 106.8 }, { lat: -6.2, lng: 106.9 }], status: 'routing', rerunQueued: false });
+    useScenario.getState().requestRun();
+    expect(useScenario.getState().status).toBe('routing');
+    expect(useScenario.getState().rerunQueued).toBe(true);
+    useScenario.getState().cancel();
+    expect(useScenario.getState().rerunQueued).toBe(false);
+  });
+
+  it('hydrates a shared scenario through the same option filter a click uses', () => {
+    useScenario.getState().hydrate({
+      waypoints: [{ lat: -6.1, lng: 106.8 }],
+      profile: 'motor_scooter',
+      timeMode: 'depart',
+      departure: '2026-09-29T07:00',
+      plateParity: 'even',
+      options: { use_tolls: 0, top_speed: 60 },
+    });
+    const state = useScenario.getState();
+    expect(state.waypoints).toEqual([{ lat: -6.1, lng: 106.8 }]);
+    expect(state.profile).toBe('motor_scooter');
+    expect([state.timeMode, state.departure, state.plateParity]).toEqual(['depart', '2026-09-29T07:00', 'even']);
+    // motor_scooter accepts top_speed but not use_tolls.
+    expect(state.options).toEqual({ top_speed: 60 });
+  });
+
   it('drops options the new profile cannot send', () => {
     useScenario.getState().setOption('use_tolls', 0);
     useScenario.getState().setOption('top_speed', 90);

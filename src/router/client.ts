@@ -122,6 +122,8 @@ export interface RouteClient {
   dispose(): Promise<void>;
   /** Cumulative loader/native counters for the live worker; queues behind an active route. */
   diagnostics(): Promise<RouteDiagnosticsSample>;
+  /** The live session's startup measurements, without starting a session that does not exist. */
+  startup(): Promise<StartupResult | null>;
 }
 
 /**
@@ -194,5 +196,9 @@ export function createRouteClient(manifestUrl: string, { onProgress }: RouteClie
       await (await pending.catch(() => undefined))?.dispose();
     },
     diagnostics,
+    async startup() {
+      if (!routerPromise) return null;
+      return (await routerPromise.catch(() => undefined))?.startup ?? null;
+    },
   };
 }
