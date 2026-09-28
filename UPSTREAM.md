@@ -110,7 +110,7 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
 10. `tools/smoke/tools-smoke.test.ts` again, one line — the port is read from
    `process.env.VALHALLA_TEST_PORT` (default 8790, upstream's fixed value) because 8790 is also the
    port `tools/verify/compare.mjs` serves the Indonesia release on, so `pnpm test` could not bind
-   while a corpus run was in flight. `VALIDHALLA_TEST_PORT=8791 pnpm test` runs both side by side.
+   while a corpus run was in flight. `VALHALLA_TEST_PORT=8791 pnpm test` runs both side by side.
 
 ## Rebasing on a newer upstream release
 
