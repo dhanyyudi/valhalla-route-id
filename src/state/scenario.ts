@@ -148,7 +148,9 @@ export function geometryForGage(state: Pick<ScenarioState, 'result' | 'waypoints
  * @param state - The fields the plan depends on.
  * @returns The verdict, the rings the request would carry and what the budget left out.
  * @remarks Pure and cheap (bounding-box tests over 30 rings), so the panel can call it on every
- *   render and a scenario's status line never lags behind its controls.
+ *   render and a scenario's status line never lags behind its controls. The wall clock passed here
+ *   is read only for a `now` scenario: a `depart`/`arrive` value that does not parse returns a
+ *   refusal plan rather than a verdict at the host's current time.
  */
 export function gagePlanFrom(state: Pick<ScenarioState, 'plateParity' | 'profile' | 'timeMode' | 'departure' | 'result' | 'waypoints'>): GagePlan {
   return planGageRequest({
@@ -247,6 +249,13 @@ export const useScenario = create<ScenarioState>((set, get) => ({
     // the request only for a `restricted` verdict — every other status leaves `exclude_polygons`
     // off the request entirely, so an existing scenario routes exactly as it did before this layer.
     const gage = gagePlanFrom(get());
+    // A departure/arrival box that names no readable time refuses the run instead of being routed at
+    // an instant the user never asked for (M-6): the panel's verdict and this refusal come from the
+    // same plan, so the two cannot disagree about why nothing was sent.
+    if (!gage.evaluation) {
+      set({ status: 'error', error: { code: 'INVALID_REQUEST', message: gage.refusal ?? 'Waktu tidak terbaca.' } });
+      return;
+    }
     set({ status: 'routing', error: null, progress: null, gage });
     const request = buildRouteRequest({
       waypoints, profile, timeMode, departure, options,

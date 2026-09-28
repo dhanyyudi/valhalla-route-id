@@ -31,7 +31,10 @@ from CARTO, which is third-party traffic on every page load (see [Attribution](#
 
 The rule is evaluated from the scenario, never from the wall clock: the simulated departure time (the
 arrival time for an `arrive_by` scenario) decides whether the constraint is in force, so a shared
-scenario always reproduces the same verdict. It follows Pergub DKI 88/2019 as the source
+scenario always reproduces the same verdict. There is no fallback to the current time — a `Berangkat`
+or `Tiba` box left empty or unreadable makes the panel refuse to evaluate the rule and refuse to
+route, and say so, rather than route on an instant the scenario does not name ("Sekarang" is the mode
+that means the wall clock, and it is the only one). It follows Pergub DKI 88/2019 as the source
 implementation does — Monday to Friday, 06:00–10:00 and 16:00–21:00 WIB, plate parity against the
 date's parity, Jakarta/Jabodetabek only, and **motorcycles and motor scooters exempt** (the panel says
 so rather than silently ignoring the toggle).
