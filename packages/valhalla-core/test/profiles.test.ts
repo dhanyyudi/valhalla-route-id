@@ -15,7 +15,33 @@ describe('validateRequest', () => {
   it('accepts more than two locations and normalizes each', () => {
     const result = validateRequest({ locations: [at(-6.2, 106.8), at(-6.5, 107.0), at(-6.9, 107.6)], costing: 'auto' });
     expect(result.locations).toHaveLength(3);
-    expect(result.locations[0]).toMatchObject({ radius: 30, minimum_reachability: 0 });
+    // Correlation defaults belong to native: the validator must not invent `radius` or
+    // `minimum_reachability`, because forcing them changes a caller's answer (Task 8 review, fix 2).
+    for (const location of result.locations) {
+      expect(location).not.toHaveProperty('radius');
+      expect(location).not.toHaveProperty('minimum_reachability');
+      expect(location).toMatchObject({ lat: expect.any(Number), lon: expect.any(Number) });
+    }
+  });
+
+  it('passes caller-supplied correlation fields through untouched', () => {
+    const result = validateRequest({
+      locations: [{ lat: -6.2, lon: 106.8, radius: 500, minimum_reachability: 50 }, at(-6.9, 107.6)],
+      costing: 'auto',
+    });
+    expect(result.locations[0]).toMatchObject({ radius: 500, minimum_reachability: 50 });
+    expect(result.locations[1]).not.toHaveProperty('minimum_reachability');
+  });
+
+  it('rejects a correlation field that is not a finite non-negative number', () => {
+    const withField = (field: string, value: unknown) => () => validateRequest({ locations: [{ lat: -6.2, lon: 106.8, [field]: value }, at(-6.9, 107.6)] });
+    expect(withField('radius', -1)).toThrowError(/radius must be a finite non-negative number/);
+    expect(withField('radius', '30')).toThrowError(/radius must be a finite non-negative number/);
+    expect(withField('minimum_reachability', Number.NaN)).toThrowError(/minimum_reachability must be a finite non-negative number/);
+    expect(withField('minimum_reachability', Number.POSITIVE_INFINITY)).toThrowError(/minimum_reachability must be a finite non-negative number/);
+    // Zero is a legitimate caller choice, not an error: the validator passes it through.
+    expect(validateRequest({ locations: [{ lat: -6.2, lon: 106.8, minimum_reachability: 0 }, at(-6.9, 107.6)] }).locations[0])
+      .toMatchObject({ minimum_reachability: 0 });
   });
 
   it('preserves driver costing options that upstream used to reject', () => {
@@ -72,7 +98,7 @@ describe('validateRequest', () => {
       costing: 'auto',
     }, { minimumLocations: 1 });
     expect(result.locations).toHaveLength(3);
-    expect(result.locations.every(location => location.radius === 30)).toBe(true);
+    expect(result.locations.every(location => !('radius' in location) && !('minimum_reachability' in location))).toBe(true);
     expect(result.sources).toHaveLength(2);
     expect(result.targets).toHaveLength(1);
     // Documented matrix fields are preserved without unknown-field warnings.

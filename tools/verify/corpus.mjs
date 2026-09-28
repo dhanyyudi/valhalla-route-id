@@ -24,6 +24,10 @@
  * that silent fallback, and the measured behaviour is recorded in the verification report.
  *
  * Usage: node tools/verify/corpus.mjs [release] [--sdk-normalised]
+ *
+ * The corpus is unchanged by the Task 8 fix round; `--sdk-normalised` should be re-run whenever
+ * `sdkNormalised` changes, because the control output must answer the request the current SDK
+ * actually sends.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -80,12 +84,16 @@ const FORBIDDEN = ['name', 'case', 'label', 'note'];
 /**
  * The request this fork's SDK host actually sends to the WASM engine.
  *
- * This mirrors `validateRequest` in `packages/valhalla-core/src/profiles.ts`: every location is
- * rewritten to `radius: 30, minimum_reachability: 0`, `units` is forced to kilometres, and the
- * language comes from `directions_options.language` or defaults to `id-ID`. The comparison runner
- * uses it as a **control**: when a corpus case differs, running the pinned native binary on this
- * rewritten request shows whether the difference is the SDK's request normalisation or a genuine
- * engine disagreement.
+ * This mirrors `validateRequest` in `packages/valhalla-core/src/profiles.ts`: the caller's
+ * locations are passed through unchanged, `costing` gets the SDK's `auto` default, `units` is
+ * forced to kilometres, and the language comes from `directions_options.language` or defaults to
+ * `id-ID`. It deliberately does **not** write `radius` or `minimum_reachability` any more: the
+ * validator forwards those only when the caller sent them, so native's own defaults apply — see
+ * the Task 8 review's fix 2 and the change note on `validateRequest`.
+ *
+ * The comparison runner uses this as a **control**: when a corpus case differs, running the pinned
+ * native binary on this rewritten request shows whether the difference is the SDK's request
+ * normalisation or a genuine engine disagreement.
  *
  * @param {Record<string, any>} request a corpus request
  */
@@ -93,7 +101,7 @@ export function sdkNormalised(request) {
   const costing = request.costing === undefined ? 'auto' : request.costing;
   return {
     ...request,
-    locations: request.locations.map(point => ({ ...point, lat: point.lat, lon: point.lon, radius: 30, minimum_reachability: 0 })),
+    locations: request.locations.map(point => ({ ...point, lat: point.lat, lon: point.lon })),
     costing,
     units: 'kilometers',
     language: request.directions_options && typeof request.directions_options.language === 'string' ? request.directions_options.language : 'id-ID',

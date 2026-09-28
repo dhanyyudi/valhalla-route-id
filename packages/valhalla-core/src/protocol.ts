@@ -2,7 +2,16 @@ import type { Coordinates, Costing } from './types.js';
 
 export interface NormalizedLocation extends Coordinates {
   type?: 'break' | 'through' | 'break_through' | 'via';
+  /**
+   * Correlation search radius in metres. Present only when the caller supplied it:
+   * `validateRequest` never forces a value, so native Valhalla's own default applies otherwise.
+   */
   radius?: number;
+  /**
+   * Minimum connectivity loki requires of the edge a location correlates to. Present only when the
+   * caller supplied it; native's default for this project's pinned config is 50, and forcing 0
+   * instead moved three of the sixteen verification-corpus answers.
+   */
   minimum_reachability?: number;
   preferred_side?: 'same' | 'opposite' | 'either';
   heading?: number;

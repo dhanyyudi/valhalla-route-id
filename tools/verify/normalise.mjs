@@ -22,7 +22,7 @@ export const NATIVE_ERROR_FIELD = 'nativeError';
  * refuses before native ever sees it, or a transport failure — is reported as `sdkError`,
  * which is a distinct kind of mismatch and never equal to a native error line.
  *
- * @param {{ code?: unknown, message?: unknown, nativeCode?: unknown }} error SDK `RoutingError`, or anything thrown
+ * @param {{ code?: unknown, message?: unknown, nativeCode?: unknown }|null|undefined} error SDK `RoutingError`, or anything thrown
  * @returns {{ nativeError: number } | { sdkError: { code: string, message: string } }}
  */
 export function normaliseRoutingError(error) {
@@ -90,4 +90,62 @@ export function summarise(value) {
   const shapeKind = legs.length && Array.isArray(legs[0].shape) ? 'geojson' : 'polyline';
   const value_ = (key) => (typeof summary[key] === 'number' ? Number(summary[key].toFixed(3)) : summary[key]);
   return `status 0: ${value_('length')} km, ${value_('time')} s, cost ${value_('cost')}, ${maneuvers} maneuvers, ${shapeKind} shape ${shape} chars`;
+}
+
+/**
+ * Classify the differing rows of a comparison run, **fail closed**.
+ *
+ * The runner's headline claim — that no genuine engine/loader disagreement remains — is only as
+ * good as the evidence behind it, and that evidence is the SDK-normalised control output: the
+ * pinned native binary's answers to the exact requests the SDK host sends. A differing row whose
+ * control verdict is missing (`controlIdentical === null`, because the control file is absent,
+ * misaligned or stale) is therefore never counted as agreement. It lands in `unclassified`, and
+ * `zeroDisagreementProven` stays false, so the zero-disagreement sentence cannot be printed from
+ * absent evidence. The same rule covers the opposite failure mode: a row whose WASM half produced
+ * no engine answer at all (`sdkError`) is a classification of its own, named as unverified rather
+ * than counted as agreement.
+ *
+ * @param {Array<{ name?: string, wasmValue?: any, controlIdentical?: boolean|null, liftedIdentical?: boolean|null }>} differing
+ *   rows whose native and WASM text differ. `liftedIdentical` is `null` — never `false` — when no
+ *   deadline-lifted run recorded an answer for the row, because "nobody ran this without the
+ *   deadline" and "the lifted run disagreed" are different facts.
+ * @param {{ controlAvailable?: boolean, controlNote?: string }} [options]
+ *   `controlAvailable` is true only when the control output was present, fresh and aligned;
+ *   `controlNote` explains its absence in the report and on the console.
+ */
+export function classifyDifferences(differing, { controlAvailable = false, controlNote = 'the SDK-normalised control output was not available for this run' } = {}) {
+  const bySdkGate = differing.filter(row => Boolean(row.wasmValue?.sdkError));
+  const byNormalisation = differing.filter(row => row.controlIdentical === true);
+  const byEngine = differing.filter(row => !row.wasmValue?.sdkError && row.controlIdentical === false);
+  // Strictly unknown: the control could not answer for this row at all.
+  const unclassified = differing.filter(row => !row.wasmValue?.sdkError && row.controlIdentical === null);
+  // SDK-gated rows the deadline-lifted engine run proved identical to native, and the (never yet
+  // observed) opposite: an engine-level run that still disagrees, which is a verified disagreement.
+  const byDeadline = bySdkGate.filter(row => row.liftedIdentical === true);
+  const byLiftedDisagreement = bySdkGate.filter(row => row.liftedIdentical === false);
+  const verified = byEngine.length + byLiftedDisagreement.length;
+  const unverifiedGates = bySdkGate.length - byDeadline.length - byLiftedDisagreement.length;
+  const unverified = unclassified.length + unverifiedGates;
+  // Both conditions matter: a control verdict for every differing row, and a control that was
+  // actually available. Without the control, no difference can be shown to be only a request
+  // rewrite, so the conclusion is unproven even when nothing is strictly unclassified.
+  const zeroDisagreementProven = controlAvailable && unclassified.length === 0 && verified === 0;
+
+  const unverifiedParts = [];
+  if (unclassified.length) unverifiedParts.push(`${unclassified.length} with no control verdict`);
+  if (unverifiedGates) unverifiedParts.push(`${unverifiedGates} with no engine answer`);
+  const headline = `${verified} verified disagreement(s) (${byNormalisation.length} reproduced byte-for-byte on the rewritten request; ${unverified} unverified${unverifiedParts.length ? ` — ${unverifiedParts.join(', ')}` : ''}).`;
+
+  const unclassifiedNote = controlAvailable ? null
+    : `${controlNote}. ${unclassified.length} of the ${differing.length} difference(s) are unclassified: ${unclassified.length === 0
+      ? 'every difference here produced no engine answer at all, which is unverified rather than agreement'
+      : 'no control verdict is available for them'}. The zero-disagreement conclusion does not apply to this run.`;
+
+  const disagreementStatement = verified > 0
+    ? `${verified} remain genuine engine/loader disagreements: native and WASM differ even on the identical normalised request. These block publication.`
+    : zeroDisagreementProven
+      ? '0 remain genuine engine/loader disagreements — the two engines agreed byte-for-byte on every request they were both given. Any such case would block publication.'
+      : `${unclassifiedNote} That is a missing classification, not an agreement.`;
+
+  return { byNormalisation, byEngine, bySdkGate, byDeadline, byLiftedDisagreement, unclassified, verified, unverified, controlAvailable, zeroDisagreementProven, headline, disagreementStatement, unclassifiedNote };
 }

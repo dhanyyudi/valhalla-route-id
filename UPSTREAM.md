@@ -19,7 +19,14 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
    single-center and one-sided tools, and a request carrying `sources`/`targets` is validated as a
    matrix: both sides are required, their combined size is the location count used for coverage,
    and the documented tool fields (`contours`, `polygons`, `denoise`, `generalize`,
-   `show_locations`) no longer register as unknown fields.
+   `show_locations`) no longer register as unknown fields. Upstream also wrote
+   `radius: 30, minimum_reachability: 0` onto **every** location; this fork no longer forces either
+   field. They are forwarded only when the caller sent them (validated as finite, non-negative
+   numbers), so native's own correlation defaults apply — `minimum_reachability: 50` in this
+   project's pinned configs — and a caller that wants a value can still set it deliberately. The
+   forced values were not harmless: they moved three of the sixteen native-versus-WASM corpus
+   answers, one of them from a route to `NO_ROUTE` (Task 8 review fix 2; see
+   `docs/datasets/indonesia-260926-eab7ae90e4197185-verification.md`).
 2. `packages/valhalla-core/src/types.ts` — extended request/result types, including
    `IsochroneRequest` and `MatrixRequest`.
 3. `native/runtime.cpp` + `native/CMakeLists.txt` — three added exports:

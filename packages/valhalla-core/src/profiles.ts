@@ -13,12 +13,39 @@ const PASSTHROUGH = new Set([
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const invalid = (message: string): never => { throw new RoutingError('INVALID_REQUEST', message); };
 
+/**
+ * Per-location correlation fields this validator forwards verbatim.
+ *
+ * It never invents a value for either: `radius` and `minimum_reachability` are loki search
+ * parameters with native defaults of their own, and substituting a value here silently changes a
+ * caller's answer rather than validating it.
+ */
+const CORRELATION_FIELDS = ['radius', 'minimum_reachability'] as const;
+
 /** Validation bounds that differ between a route and the single-center/one-sided tools. */
 export interface ValidateRequestOptions {
   /** Smallest accepted number of locations; defaults to two, the native route minimum. */
   minimumLocations?: number;
 }
 
+/**
+ * Validate a request and return the exact copy this runtime hands to the WASM engine.
+ *
+ * The copy differs from the caller's request only where the runtime has to resolve something the
+ * engine cannot: `locations` becomes the validated coordinate list (a matrix `sources`/`targets`
+ * pair folds into it), `costing` gets its documented default, `units` is pinned to kilometres and
+ * `language` is resolved from `directions_options`.
+ *
+ * Per-location correlation fields (`radius`, `minimum_reachability`) are **forwarded exactly as
+ * the caller sent them and never forced**. Native Valhalla applies its own defaults when they are
+ * absent — this project's pinned native config sets `minimum_reachability: 50` — and those
+ * defaults are what let loki correlate a destination to a usable edge. Forcing
+ * `minimum_reachability: 0` instead allowed correlation to a low-reachability edge inside a small,
+ * unconnected component, which flipped three of the sixteen native-versus-WASM corpus answers (one
+ * route to `NO_ROUTE`/error 442, one to a different 97.186 km route; see the Task 8 verification
+ * report and the review that produced this change). A caller that wants a value supplies it, and a
+ * supplied value must be a finite number ≥ 0.
+ */
 export function validateRequest(request: unknown, options: ValidateRequestOptions = {}): NormalizedRequest {
   if (!object(request)) return invalid('A route request is required.');
   const costing = (request.costing === undefined ? 'auto' : request.costing) as Costing;
@@ -38,7 +65,14 @@ export function validateRequest(request: unknown, options: ValidateRequestOption
     if (!object(point) || typeof point.lat !== 'number' || !Number.isFinite(point.lat) || Math.abs(point.lat) > 90 ||
         typeof point.lon !== 'number' || !Number.isFinite(point.lon) || Math.abs(point.lon) > 180)
       return invalid('Coordinates must be finite latitude/longitude values.');
-    return { ...point, lat: point.lat, lon: point.lon, radius: 30, minimum_reachability: 0 } as NormalizedLocation;
+    // Correlation defaults belong to the engine, not to this validator: pass a supplied value
+    // through untouched and leave the field out entirely when the caller did not send one.
+    for (const field of CORRELATION_FIELDS) {
+      const value = point[field];
+      if (value === undefined) continue;
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return invalid(`${field} must be a finite non-negative number.`);
+    }
+    return { ...point, lat: point.lat, lon: point.lon } as NormalizedLocation;
   });
 
   const allowed = new Set([...COSTING_OPTIONS[costing], ...BASE_COSTING_OPTIONS]);

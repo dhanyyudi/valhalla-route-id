@@ -245,10 +245,11 @@ export interface ExtendedRouteFields {
 /**
  * N ordered locations (at least two) with a supported road profile and optional matching settings.
  * @remarks Supply origin/destination, an ordered locations array, or both; the validator requires
- * two or more finite locations. The SDK fixes kilometers, a 30 m correlation radius and minimum
- * reachability 0 per location, and defaults instruction language to Bahasa Indonesia
- * (`directions_options.language` is `id-ID` unless overridden). `date_time`, `alternates`,
- * `exclude_polygons` and `shape_format` are accepted.
+ * two or more finite locations. The SDK fixes kilometers and defaults instruction language to
+ * Bahasa Indonesia (`directions_options.language` is `id-ID` unless overridden). Per-location
+ * correlation fields (`radius`, `minimum_reachability`) are forwarded exactly as supplied and are
+ * never forced, so native's own defaults apply unless the caller sets them. `date_time`,
+ * `alternates`, `exclude_polygons` and `shape_format` are accepted.
  */
 export type RouteRequest = RouteProfile & ExtendedRouteFields & {
   /** Start coordinate inside the dataset coverage. */

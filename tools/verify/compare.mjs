@@ -34,6 +34,14 @@
  *   per-operation deadline (`tools/verify/long-run.mjs`). If it answers as native does, the host
  *   deadline, not the engine, is what stopped the case.
  *
+ * Neither is allowed to soften the headline: the classification in `normalise.mjs` fails closed,
+ * so a difference with no control verdict is reported as *unclassified* and the zero-disagreement
+ * sentence is withheld rather than asserted without evidence.
+ *
+ * Every compared half is also guarded by provenance (`tools/verify/provenance.mjs`): the corpus
+ * sha256 it answers is recorded beside it and checked before anything is compared, so a corpus
+ * edit can never be silently compared against the previous corpus's output.
+ *
  * Usage: node tools/verify/compare.mjs <release> [--reuse-wasm]
  * `--reuse-wasm` rebuilds the report from the already recorded `tools/verify/wasm.jsonl`.
  */
@@ -42,8 +50,9 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs
 import { join } from 'node:path';
 import { createRouter } from 'valhalla-server/node';
 import { serveDataset } from '../serve-dataset.mjs';
-import { assertAligned } from './corpus.mjs';
-import { canonicalJson, differenceContext, firstDifference, normaliseRoutingError, summarise } from './normalise.mjs';
+import { assertAligned, NORMALISED_CORPUS_PATH } from './corpus.mjs';
+import { canonicalJson, classifyDifferences, differenceContext, firstDifference, normaliseRoutingError, summarise } from './normalise.mjs';
+import { outputProblem, readProvenance, recordOutput } from './provenance.mjs';
 
 /**
  * The two largest tiles in this release are 48,442,160 B and 37,395,280 B, both Jakarta-area.
@@ -120,8 +129,17 @@ async function main() {
   const releaseDir = join('public', 'datasets', release);
 
   // --- inputs -----------------------------------------------------------------------------
+  const corpusText = readFileSync(CORPUS_PATH, 'utf8');
   const corpus = readLines(CORPUS_PATH);
   const names = assertAligned(corpus, JSON.parse(readFileSync(NAMES_PATH, 'utf8')));
+  // Provenance before anything else: the halves are aligned by line index, so a native output
+  // recorded against a different corpus would be compared, case by case, with the wrong requests.
+  // Refusing here is the whole point — a stale pair must fail loudly, never compare confidently.
+  const nativeText = existsSync(NATIVE_PATH) ? readFileSync(NATIVE_PATH, 'utf8') : null;
+  const nativeProblem = outputProblem({ outputPath: NATIVE_PATH, text: nativeText, requestPath: CORPUS_PATH, requestText: corpusText, corpusPath: CORPUS_PATH, corpusText });
+  if (nativeProblem) {
+    throw new Error(`${nativeProblem}. Produce the native half on the build host and stamp it with \`node tools/verify/stamp.mjs ${NATIVE_PATH}\` before comparing.`);
+  }
   const nativeLines = readLines(NATIVE_PATH);
   // The native half normalises failures itself; we only reject a file that cannot be a JSONL of responses.
   const nativeRaw = corpus.map((_, index) => nativeLines[index] ?? null);
@@ -133,6 +151,8 @@ async function main() {
   let wasm;
   let startup = null;
   if (reuseWasm) {
+    const problem = outputProblem({ outputPath: WASM_PATH, text: existsSync(WASM_PATH) ? readFileSync(WASM_PATH, 'utf8') : null, requestPath: CORPUS_PATH, requestText: corpusText, corpusPath: CORPUS_PATH, corpusText });
+    if (problem) throw new Error(`--reuse-wasm: ${problem}; route again, or stamp it with \`node tools/verify/stamp.mjs ${WASM_PATH}\` if you know it answers the current corpus.`);
     const lines = readLines(WASM_PATH);
     if (lines.length !== corpus.length) throw new Error(`--reuse-wasm: ${WASM_PATH} has ${lines.length} lines for ${corpus.length} cases.`);
     console.log(`reusing ${WASM_PATH}`);
@@ -166,13 +186,25 @@ async function main() {
   // Optional control: the pinned native binary's answers to the SDK-normalised requests
   // (`corpus.mjs --sdk-normalised`, produced on the build host). It never changes a verdict or
   // the exit code; it only says whether a difference is the SDK rewriting the request or the two
-  // engines genuinely disagreeing.
-  const controlRaw = existsSync(NORMALISED_NATIVE_PATH) ? readLines(NORMALISED_NATIVE_PATH) : null;
-  const control = controlRaw && controlRaw.length === corpus.length ? controlRaw : null;
-  if (controlRaw && !control) console.error(`WARNING: ${NORMALISED_NATIVE_PATH} has ${controlRaw.length} lines for ${corpus.length} cases; the control diagnosis is skipped.`);
+  // engines genuinely disagreeing. A control that is missing, truncated or recorded against a
+  // different corpus is unusable, and the classification then reports the affected differences as
+  // *unclassified* instead of asserting the zero-disagreement sentence without evidence.
+  const controlText = existsSync(NORMALISED_NATIVE_PATH) ? readFileSync(NORMALISED_NATIVE_PATH, 'utf8') : null;
+  // The control answers the *rewritten* requests, so its own request file is checked too: a
+  // regenerated control corpus with a stale control output would otherwise be classified against
+  // requests the SDK no longer sends.
+  const normalisedCorpusText = existsSync(NORMALISED_CORPUS_PATH) ? readFileSync(NORMALISED_CORPUS_PATH, 'utf8') : null;
+  const controlProblem = normalisedCorpusText === null
+    ? `${join('tools', 'verify', 'corpus-sdk-normalised.jsonl')} is missing; generate it with \`node tools/verify/corpus.mjs <release> --sdk-normalised\``
+    : outputProblem({ outputPath: NORMALISED_NATIVE_PATH, text: controlText, requestPath: NORMALISED_CORPUS_PATH, requestText: normalisedCorpusText, corpusPath: CORPUS_PATH, corpusText });
+  const control = controlProblem === null ? readLines(NORMALISED_NATIVE_PATH) : null;
+  const controlNote = controlProblem === null ? null
+    : `The SDK-normalised control output (\`${NORMALISED_NATIVE_PATH}\`) is unusable for this run (${controlProblem})`;
+  if (controlProblem) console.error(`WARNING: ${controlNote}; differing cases without a control verdict are reported as unclassified.`);
   // Optional engine-level answers for cases the host deadline could not finish (`long-run.mjs`).
-  const liftedRaw = existsSync(LIFTED_PATH) ? readLines(LIFTED_PATH) : null;
-  const lifted = liftedRaw && liftedRaw.length === corpus.length ? liftedRaw.map(text => (text === 'null' ? null : text)) : null;
+  const liftedProblem = outputProblem({ outputPath: LIFTED_PATH, text: existsSync(LIFTED_PATH) ? readFileSync(LIFTED_PATH, 'utf8') : null, requestPath: CORPUS_PATH, requestText: corpusText, corpusPath: CORPUS_PATH, corpusText });
+  const lifted = liftedProblem === null ? readLines(LIFTED_PATH).map(text => (text === 'null' ? null : text)) : null;
+  if (liftedProblem && existsSync(LIFTED_PATH)) console.error(`WARNING: ${LIFTED_PATH} is unusable for this run (${liftedProblem}); the deadline-lifted diagnosis is skipped.`);
 
   const rows = corpus.map((_, index) => {
     const nativeText = nativeRaw[index];
@@ -218,7 +250,10 @@ async function main() {
       controlOffset,
       // Engine-level answer for this case from a deadline-lifted run, when one was recorded.
       liftedText: lifted?.[index] ?? null,
-      liftedIdentical: lifted?.[index] != null && nativeCanonical !== null && lifted[index] === nativeCanonical,
+      // `null` (not `false`) when no lifted answer exists: "nobody ran this without the deadline"
+      // and "the deadline-lifted run disagreed" are different facts, and the classification must
+      // not read the absence of evidence as a disagreement.
+      liftedIdentical: lifted?.[index] == null || nativeCanonical === null ? null : lifted[index] === nativeCanonical,
       liftedOffset: lifted?.[index] != null && nativeCanonical !== null ? firstDifference(nativeCanonical, lifted[index]) : -1,
       // Informational only: the raw native line differs from its canonical form in the spelling
       // of integral doubles (`0.0` versus `0`). Never used to decide the verdict.
@@ -230,15 +265,18 @@ async function main() {
   const missingNative = rows.filter(row => row.nativeText === null);
   const sdkGated = rows.filter(row => row.wasmValue?.sdkError);
   const nativeErrorRows = rows.filter(row => typeof row.nativeValue?.nativeError === 'number');
-  // A differing case whose WASM answer is byte-identical to native's answer for the same
-  // SDK-normalised request is a request-rewrite difference, not an engine disagreement.
-  const byNormalisation = differing.filter(row => row.controlIdentical === true);
-  const byEngine = differing.filter(row => row.controlIdentical === false && !row.wasmValue?.sdkError);
-  const bySdkGate = differing.filter(row => row.wasmValue?.sdkError);
-  // SDK-gated cases the deadline-lifted engine run proved identical to native.
-  const byDeadline = bySdkGate.filter(row => row.liftedIdentical === true);
+  // The classification fails closed: see `classifyDifferences`. A differing case whose WASM answer
+  // is byte-identical to native's answer for the same SDK-normalised request is a request-rewrite
+  // difference; a case with no control verdict is *unclassified*, and the zero-disagreement
+  // sentence is withheld rather than asserted from missing evidence.
+  const verdict = classifyDifferences(differing, { controlAvailable: control !== null, controlNote });
+  const { byNormalisation, bySdkGate, byDeadline, unclassified } = verdict;
 
-  writeFileSync(WASM_PATH, `${rows.map(row => row.wasmText).join('\n')}\n`);
+  const wasmText = `${rows.map(row => row.wasmText).join('\n')}\n`;
+  writeFileSync(WASM_PATH, wasmText);
+  // Record which corpus this half answers, so `--reuse-wasm` (and any later reader) can tell
+  // whether the recorded output still belongs to the committed corpus.
+  recordOutput({ outputPath: WASM_PATH, text: wasmText, requestPath: CORPUS_PATH, requestText: corpusText, corpusPath: CORPUS_PATH, corpusText, source: reuseWasm ? 'reused wasm.jsonl (provenance re-checked)' : `compare.mjs (memoryBudgetBytes ${MEMORY_BUDGET_BYTES})` });
 
   // --- report -----------------------------------------------------------------------------
   const baseline = rows.find(row => row.name === 'jakarta-bandung-auto');
@@ -271,6 +309,11 @@ async function main() {
     '',
     `- Corpus: \`${CORPUS_PATH}\` (${rows.length} pure Valhalla requests, sha256 \`${short(sha256(readFileSync(CORPUS_PATH, 'utf8')))}\`),`,
     `  case names in \`${NAMES_PATH}\` (sidecar alignment asserted at runtime).`,
+    `- Alignment: the halves are lined up by index, so each recorded output is stamped with the`,
+    `  corpus sha256 it answers (\`tools/verify/provenance.json\`, written by \`compare.mjs\` for the`,
+    `  half it runs and by \`tools/verify/stamp.mjs\` for the native half) and the runner refuses to`,
+    `  compare a pair whose stamp does not match the committed corpus. Native half stamped`,
+    `  \`${(readProvenance().outputs[NATIVE_PATH]?.corpus?.sha256 ?? 'unknown').slice(0, 12)}\`; this half is stamped as it is written.`,
     `- Native half: the pinned \`native-reference\` binary (\`native/reference.cpp\`) inside the`,
     `  \`valhalla-browser-build:latest\` image, reading the build work directory tiles:`,
     '  `docker run --rm --user 1000:1000 -v "$PWD:/work" -w /work valhalla-browser-build \\`',
@@ -287,6 +330,9 @@ async function main() {
       `  \`memoryBudgetBytes\` ${startup.memoryBudgetBytes}, WASM memory ${startup.wasmMemory.initialMiB}/${startup.wasmMemory.maximumMiB} MiB,`,
       `  config sha256 \`${short(startup.configSha256)}\`, effective config sha256 \`${short(startup.effectiveConfigSha256)}\`.`,
     ] : []),
+    `- SDK build: \`pnpm run build:sdk\` was re-run after \`packages/valhalla-core/src/profiles.ts\` stopped`,
+    `  forcing \`radius\`/\`minimum_reachability\` onto every location, so this run measures the fixed host`,
+    `  (a first attempt against the stale \`dist\` bundle still reproduced the old forced-default answers).`,
     `- Native graph audit (\`native-reference <config> --inspect\`): \`${existsSync(NATIVE_INSPECT_PATH) ? readFileSync(NATIVE_INSPECT_PATH, 'utf8').trim() : 'not recorded'}\`.`,
     '',
     '### The equality rule',
@@ -323,18 +369,17 @@ async function main() {
     ...(differing.length ? [
       '### Why the differing cases differ',
       '',
-      `Of ${differing.length} differing case(s):`,
+      `Of ${differing.length} differing case(s): ${verdict.headline}`,
       '',
       `- ${byNormalisation.length} are explained by the SDK rewriting the request. The SDK host`,
-      '  (`packages/valhalla-core/src/profiles.ts`) rewrites every location to `radius: 30,',
-      '  minimum_reachability: 0`, forces kilometres and resolves the language before the WASM engine',
-      `  sees it. \`${NORMALISED_NATIVE_PATH}\` records the pinned native binary's answers to those same`,
-      `  rewritten requests (generated from \`${join('tools', 'verify', 'corpus-sdk-normalised.jsonl')}\`);`,
-      '  for these cases the native answer for the rewritten request is byte-identical to the WASM',
+      '  (`packages/valhalla-core/src/profiles.ts`) resolves the costing, pins `units` to kilometres',
+      '  and resolves the language before the WASM engine sees it — and, since the Task 8 fix round,',
+      '  leaves each location\'s `radius` and `minimum_reachability` exactly as the caller sent them,',
+      `  so native\'s own correlation defaults apply. \`${NORMALISED_NATIVE_PATH}\` records the pinned native`,
+      `  binary's answers to those same rewritten requests (generated from \`${join('tools', 'verify', 'corpus-sdk-normalised.jsonl')}\`);`,
+      '  for such a case the native answer for the rewritten request is byte-identical to the WASM',
       '  answer, so the engines agree and only the request differs.',
-      `- ${byEngine.length === 0
-        ? '0 remain genuine engine/loader disagreements — the two engines agreed byte-for-byte on every request they were both given. Any such case would block publication.'
-        : `${byEngine.length} remain genuine engine/loader disagreements: native and WASM differ even on the identical normalised request. These block publication.`}`,
+      `- ${verdict.disagreementStatement}`,
       `- ${bySdkGate.length} are SDK-level failures with no engine answer at all (a host gate such as the`,
       '  operation deadline or a resource limit), reported as `sdkError` rather than as agreement.',
       ...(byDeadline.length ? [
@@ -382,9 +427,10 @@ async function main() {
           '- SDK-normalisation control: not applicable — the WASM half produced no engine answer at all',
           '  (the SDK host stopped the operation before the engine returned), so there is nothing to',
           '  compare against the rewritten request.',
-        ] : row.controlIdentical === null ? ['- SDK-normalisation control: not available for this run.'] : row.controlIdentical ? [
+        ] : row.controlIdentical === null ? ['- SDK-normalisation control: not available for this run, so this difference is unclassified.'] : row.controlIdentical ? [
           `- SDK-normalisation control: **the engines agree**. Native, given the same request the SDK`,
-          `  actually sends (\`radius: 30, minimum_reachability: 0\`), answers \`${summarise(row.wasmValue)}\` —`,
+          '  actually sends (the caller\'s locations unchanged plus `units` and the resolved language),',
+          `  answers \`${summarise(row.wasmValue)}\` —`,
           '  byte-identical to the WASM answer. The difference is the SDK host rewriting the request,',
           '  not an engine or loader disagreement.',
         ] : [
@@ -414,6 +460,11 @@ async function main() {
     '  Indonesian narration is not available from this runtime build at all.',
     '- A handful of long-distance routes share one WASM session, so tile-cache state differs from a',
     '  cold single-request run. Routing output does not depend on cache state; only timing does.',
+    '- The WASM half measures the **packaged** SDK (`packages/valhalla-server/dist`, bundled from',
+    '  `packages/valhalla-core/src`), not the TypeScript sources. `pnpm run build:sdk` must be re-run',
+    '  before this corpus whenever the core changes, or the comparison silently measures the',
+    '  previous build — which is how the first attempt at this re-run still saw the old forced',
+    '  correlation defaults after `profiles.ts` had been fixed.',
     '- This is a `route` action corpus. `isochrone`, `optimized_route` and `matrix` are exported by',
     '  the runtime but are not covered here.',
     '',
@@ -431,7 +482,13 @@ async function main() {
     if (row.controlIdentical !== null) console.log(`  control (native on the SDK-normalised request): ${row.controlIdentical ? 'identical — the SDK rewrote the request' : 'still different'}`);
   }
   console.log(`\n${rows.length} cases: ${rows.length - differing.length} identical, ${differing.length} different`);
-  if (differing.length) console.log(`  of the differing: ${byNormalisation.length} explained by SDK request normalisation, ${byEngine.length} genuine engine disagreement(s), ${bySdkGate.length} SDK-level gate(s)`);
+  if (differing.length) {
+    console.log(`  of the differing: ${byNormalisation.length} explained by SDK request normalisation, ${verdict.verified} genuine engine disagreement(s), ${bySdkGate.length} SDK-level gate(s)${unclassified.length ? `, ${unclassified.length} unclassified` : ''}`);
+    console.log(`  ${verdict.headline}`);
+    // Fail closed: without a usable control verdict the classification cannot claim agreement,
+    // and this line says so out loud rather than leaving it to a careful reader.
+    if (verdict.unclassifiedNote) console.log(`  ${verdict.unclassifiedNote}`);
+  }
   console.log(`report: ${reportPath}`);
   if (missingNative.length) console.log(`missing native output for: ${missingNative.map(row => row.name).join(', ')}`);
   if (sdkGated.length) console.log(`SDK-gated (no native code) cases: ${sdkGated.map(row => row.name).join(', ')}`);
