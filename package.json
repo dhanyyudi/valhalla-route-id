@@ -22,6 +22,8 @@
     "build:native": "bash scripts/build.sh native",
     "build:wasm": "bash scripts/build.sh wasm",
     "build:sdk": "pnpm --filter valhalla-browser build && pnpm --filter valhalla-server build",
+    "build:gage": "node tools/build-gage-polygons.ts",
+    "build:gage:check": "node tools/build-gage-polygons.ts --check",
     "data:osm": "bash scripts/data.sh",
     "data:region": "bash scripts/data.sh --region",
     "data:etags": "node scripts/dataset-etags.js",
