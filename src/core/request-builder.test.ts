@@ -33,9 +33,9 @@ describe('buildRouteRequest', () => {
     const ring: number[][] = [[106.82, -6.18], [106.83, -6.18], [106.83, -6.19], [106.82, -6.18]];
     const request = buildRouteRequest({ ...base, excludePolygons: [ring, ring] });
     expect(request.exclude_polygons).toEqual([ring, ring]);
-    // The SDK's own declaration types this as `string[]`; the engine reads coordinates, so the value
-    // must stay numeric. A regression that stringified it would silently disable the exclusion.
-    expect(Array.isArray((request.exclude_polygons as unknown as number[][][])[0][0])).toBe(true);
+    // The SDK type admits both forms; the engine reads coordinates, so the value must stay numeric.
+    // A regression that stringified it would silently disable the exclusion.
+    expect(Array.isArray((request.exclude_polygons as number[][][])[0][0])).toBe(true);
   });
 
   it('omits exclude_polygons entirely when the constraint does not apply', () => {

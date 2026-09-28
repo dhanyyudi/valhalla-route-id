@@ -166,7 +166,9 @@ async function restrictedThenControl(
   await expect(page.getByTestId(`parity-${RESTRICTED_PARITY}`)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('gage-status')).toContainText('Kena ganjil-genap');
   // The estimate is live before the route runs: the panel already says what the request will carry.
-  await expect(page.getByTestId('gage-request')).toContainText('exclude_polygons');
+  // The ring count must be non-zero — `toContainText('exclude_polygons')` alone also passes for the
+  // "exclude_polygons 0 ring" a refusal or a spent budget would print.
+  await expect(page.getByTestId('gage-request')).toContainText(/exclude_polygons [1-9]\d* ring/);
 
   await route(page, `${label}-restricted`, true);
   const restricted = await readRun(page, `${label}-restricted`);
@@ -187,12 +189,17 @@ async function restrictedThenControl(
   await page.screenshot({ path: testInfo.outputPath(`${label}-restricted.png`) });
   // What the run actually sent, beside the estimate — the two differ by design, because the estimate
   // is recomputed from the route this run just returned while the request was planned from the
-  // waypoints that preceded it. Asserted together so the record shows both numbers.
+  // waypoints that preceded it. The estimate is labelled as exactly that: a re-run estimate, never
+  // "the route above", because its ring was not the one this run sent (in production it can name a
+  // different corridor). Both lines state the 10 km ceiling, so a restricted result on screen is
+  // still shown next to the limit that shaped it.
   const sent = ((await page.getByTestId('gage-sent').textContent()) ?? '').trim();
   const estimate = ((await page.getByTestId('gage-request').textContent()) ?? '').trim();
   expect(sent).toContain('Dikirim pada rute terakhir');
   expect(sent).toContain(`${restricted.excludePolygons} ring`);
-  expect(estimate).toContain('Untuk rute di atas');
+  expect(sent).toContain('batas 10 km per permintaan');
+  expect(estimate).toContain('Perkiraan bila rute ini dijalankan ulang');
+  expect(estimate).toContain('batas 10 km per permintaan');
   console.log(`E2E_RESULT ${JSON.stringify(restricted)}`);
 
   // ── The control run: same scenario, constraint off. ────────────────────────────────────────────
@@ -263,11 +270,14 @@ test('ganjil-genap: the Sudirman pair shows what the browser can and cannot prov
   expect(restricted.crossing).not.toBe('');
   expect(control.crossing).not.toBe('');
 
-  // What this pair cannot prove, measured rather than asserted: repeating the *identical* request in
-  // one session makes the browser runtime answer with different routes, so a single
-  // restricted-versus-control pair cannot attribute a difference to the exclusion. The three runs
-  // below are that measurement — the scenario is still Nonaktif from the control above, so all three
-  // send the same request and each one's own result is awaited before it is read.
+  // What this pair cannot prove, measured rather than asserted: a single restricted-versus-control
+  // pair cannot attribute a difference to the exclusion on its own. The three runs below are that
+  // measurement — the scenario is still Nonaktif from the control above, so all three send the
+  // *identical* request and each one's own result is awaited before it is read. The runtime answers
+  // identical requests identically (the recorded repeats all returned `4,396 km/162`), so these runs
+  // guard against order and cache effects in the harness rather than against a non-deterministic
+  // engine: an earlier version of this comment claimed the runtime answered differently each time,
+  // which the measurements then retracted.
   const outcomes: string[] = [];
   for (let index = 1; index <= 3; index += 1) {
     await route(page, `sudirman-repeat-${index}`, false);

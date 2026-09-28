@@ -90,7 +90,7 @@ describe.skipIf(!available)('corridor exclusion on the real engine', () => {
     const avoided = await router!.route({
       locations: [START, END],
       costing: 'auto',
-      exclude_polygons: encodeExcludePolygons(selection.rings) as unknown as string[],
+      exclude_polygons: encodeExcludePolygons(selection.rings),
     });
     const avoidedGeometry = coordinatesOf(avoided);
     const avoidedCrossings = findCorridorCrossings(avoidedGeometry, corridors);

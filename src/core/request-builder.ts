@@ -51,14 +51,13 @@ export function buildRouteRequest(scenario: Scenario): RouteRequest {
   if (scenario.timeMode !== 'now') request.date_time = { type: DATE_TIME_TYPE[scenario.timeMode], value: scenario.departure };
   if (Object.keys(scenario.options).length > 0) request.costing_options = { [scenario.profile]: { ...scenario.options } };
   if (scenario.excludePolygons && scenario.excludePolygons.length > 0) {
-    // The SDK's declaration narrows `exclude_polygons` to `string[]`, but nothing in the fork reads
-    // an entry's type: `validateRequest` passes the field through untouched (packages/valhalla-core/
-    // src/profiles.ts) and Valhalla's own parser accepts any JSON array there. The engine's contract
-    // is the native `parse_ring`, which reads `coords[0]` as longitude and `coords[1]` as latitude —
-    // verified against this build with the probe recorded in tools/build-gage-polygons.ts (a nested
-    // `[[lon, lat], ...]` ring moved a route from 24.516 km to 15.746 km; the comma-separated string
-    // form changed nothing at all). The cast is therefore the request's real shape, not a widening.
-    request.exclude_polygons = scenario.excludePolygons.map(ring => ring.map(([lng, lat]) => [lng, lat])) as unknown as string[];
+    // Neither the SDK nor the Worker rewrites this field: `validateRequest` passes it through
+    // untouched (packages/valhalla-core/src/profiles.ts) and its type now admits the numeric ring
+    // form. The engine's contract is the native `parse_ring`, which reads `coords[0]` as longitude
+    // and `coords[1]` as latitude — verified against this build with the probe recorded in
+    // tools/build-gage-polygons.ts (a nested `[[lon, lat], ...]` ring moved a route from 24.516 km
+    // to 15.746 km; the comma-separated string form changed nothing at all).
+    request.exclude_polygons = scenario.excludePolygons.map(ring => ring.map(([lng, lat]) => [lng, lat]));
   }
   return request;
 }
