@@ -433,36 +433,120 @@ function boxOverlapArea(a: [number, number, number, number], b: [number, number,
   return Math.max(0, width) * Math.max(0, height);
 }
 
+/** Squared distance from a point to a segment, all four already projected to metres. */
+function pointToSegmentSquared(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay;
+  if (dx === 0 && dy === 0) return (px - ax) ** 2 + (py - ay) ** 2;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+  return (px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2;
+}
+
+/**
+ * How close a ring's outline comes to a route, in metres.
+ *
+ * The measure is vertex-to-polyline and therefore an upper bound on the true clearance: a route
+ * crossing a ring between two of its vertices scores the distance to the nearer vertex, not zero.
+ * It still separates the two cases the ranking cares about — a corridor the route runs into scores
+ * tens of metres, one it passes beside scores its real clearance — and the crossing set, not this
+ * number, is what decides whether a corridor is on the route.
+ *
+ * This is the ranking the packer needs as a tie-breaker, and box overlap is not a substitute for it.
+ * Ranked by how much of the route's *bounding box* a ring covers, a request spends its whole budget
+ * on corridors the route merely passes beside: measured against the deployed Worker, the 24.5 km
+ * Jakarta pair was sent two rings — 9.1 km of perimeter — whose geometry the route never entered,
+ * and the resulting route was byte-identical to the run with the constraint off. Distance to the
+ * route's actual polyline cannot make that mistake.
+ *
+ * @param route - Route geometry, `[lng, lat]`.
+ * @param ring - The candidate ring.
+ * @returns The smallest distance in metres between any ring vertex and any route segment, or
+ *   `Infinity` for an empty input.
+ */
+export function ringDistanceToRouteMeters(route: LngLat[], ring: CorridorRing): number {
+  if (route.length === 0 || ring.coordinates.length === 0) return Infinity;
+  const reference = route[0][1] * DEG;
+  const scale = METERS_PER_DEGREE_LATITUDE * Math.cos(reference);
+  const project = ([lng, lat]: LngLat): [number, number] => [lng * scale, lat * METERS_PER_DEGREE_LATITUDE];
+  const path = route.map(project);
+  let best = Infinity;
+  for (const vertex of ring.coordinates) {
+    const [px, py] = project(vertex);
+    for (let index = 0; index + 1 < path.length; index += 1) {
+      const distance = pointToSegmentSquared(px, py, path[index][0], path[index][1], path[index + 1][0], path[index + 1][1]);
+      if (distance < best) best = distance;
+    }
+    if (path.length === 1) best = Math.min(best, (px - path[0][0]) ** 2 + (py - path[0][1]) ** 2);
+  }
+  return Math.sqrt(best);
+}
+
+/**
+ * Rings further than this from the route are not candidates at all.
+ *
+ * The budget is ~9.5 km of ring against ~141 km of network, so a ring across the city is never the
+ * better buy: another candidate is always closer. The horizon only exists to keep the ranking cheap
+ * and its result obvious; the box test above it stays as the cheap first filter.
+ */
+export const RANKING_HORIZON_METERS = 3000;
+
+/** Argument object for `selectCorridorsForRoute`. */
+export interface RingSelectionRequest {
+  /** Route geometry as `[lng, lat]`, or the planned waypoints when no route exists yet. */
+  route: LngLat[];
+  /** The generated corridors. */
+  corridors: CorridorPolygons[];
+  /** Buffer half-width, used to grow the route's bounding box. */
+  bufferMeters: number;
+  /** Ring-perimeter budget for this request. */
+  budgetMeters?: number;
+  /**
+   * The corners the route runs through, from `findCorridorCrossings`.
+   *
+   * This is the ground truth the packer ranks by, and it is why the crossing module exists before
+   * the selector does: "near the route" and "crossed by the route" are different sets, and ranking by
+   * distance alone picks the wrong one. Measured against the deployed Worker, a distance-ranked
+   * selection sent two rings the route never entered and produced a route byte-identical to the
+   * constraint-off control.
+   *
+   * Only corridors in this report are candidates at all. A corridor the route does not enter is not
+   * worth a ring: the budget is ~9.5 km of ring against a ~141 km network, so every ring spent on a
+   * street the route passes beside is a ring not spent on a street it drives down. When no route has
+   * been calculated yet there is nothing to cross and nothing to exclude.
+   */
+  crossed?: ReadonlyArray<{ id: string; segments?: number }>;
+}
+
 /**
  * Choose the rings to exclude for one route.
  *
- * Two limits decide this, and the second is the sharp one. Only rings whose bounding box the
- * route's own box (grown by the buffer) touches are candidates — nothing else can be crossed. The
- * survivors are then packed one *ring* at a time, the largest overlap with the route's box first,
- * until the request's summed perimeter reaches `REQUEST_PERIMETER_BUDGET_METERS`.
+ * Three limits decide this, and the last is the sharp one. Only rings whose corridor the route
+ * actually runs through are candidates (see `crossed`), and only those whose bounding box the route's
+ * own box — grown by the buffer — touches. The survivors are packed one *ring* at a time, corridors
+ * carrying the most of the route first and, within a corridor, the nearest ring first, until the
+ * request's summed perimeter reaches the budget.
  *
  * Packing per ring rather than per corridor matters because Valhalla sums `boost::geometry::perimeter`
  * over every ring in a request and refuses the whole request above
  * `service_limits.max_exclude_polygons_length` (10,000 m here — probed as native error 167). The 25
  * corridors are ~141 km of ring between them, so no request can carry the network: about 9.5 km is
- * the whole budget, which is two or three of these rings. Sending the rings that overlap the route
- * most is therefore the best a single request can do, and the crossing report names the rest.
+ * the whole budget, which is two or three of these rings. Spending it on the corridors the route
+ * runs through is therefore the best a single request can do, and the crossing report names the rest.
  *
- * @param route - Route geometry as `[lng, lat]`, or the planned waypoints when no route exists yet.
- * @param corridors - The generated corridors.
- * @param bufferMeters - Buffer half-width, used to grow the route's bounding box.
- * @param budgetMeters - Ring-perimeter budget for this request.
+ * @param request - Route geometry, corridors, buffer width, budget and the crossed-corridor ids.
  * @returns The rings to send, the corridors they cover, those left out, and the perimeter requested.
- * @remarks Deterministic: candidates are ranked by overlap area then by the artifact's own order, and
- *   the returned rings are re-sorted into that same order before they leave.
+ * @remarks Deterministic: candidates are ranked by (crossed, distance to the route, box overlap, the
+ *   artifact's own order), and the chosen rings are re-sorted into the artifact's order before they
+ *   leave.
  */
-export function selectCorridorsForRoute(
-  route: LngLat[],
-  corridors: CorridorPolygons[],
-  bufferMeters: number,
-  budgetMeters: number = REQUEST_PERIMETER_BUDGET_METERS,
-): RingSelection {
-  if (route.length === 0) return { rings: [], selected: [], omitted: [], perimeterMeters: 0 };
+export function selectCorridorsForRoute(request: RingSelectionRequest): RingSelection {
+  const { route, corridors, bufferMeters, crossed } = request;
+  const budgetMeters = request.budgetMeters ?? REQUEST_PERIMETER_BUDGET_METERS;
+  if (route.length === 0 || !crossed || crossed.length === 0) {
+    return { rings: [], selected: [], omitted: [], perimeterMeters: 0 };
+  }
+  // How much of the route each corridor carries: the crossing report counts the route segments that
+  // met a ring, which is a better "how much am I on this street" signal than any distance.
+  const weight = new Map(crossed.map(entry => [entry.id, entry.segments ?? 0]));
   const routeBounds = coordinateBounds(route);
   const latDegrees = bufferMeters / METERS_PER_DEGREE_LATITUDE;
   const lngDegrees = bufferMeters / (METERS_PER_DEGREE_LATITUDE * Math.cos(routeBounds[1] * DEG));
@@ -472,10 +556,15 @@ export function selectCorridorsForRoute(
   ];
 
   const candidates = corridors.flatMap((corridor, corridorIndex) => corridor.rings.map((ring, ringIndex) => ({
-    corridor, corridorIndex, ring, ringIndex, overlap: boxOverlapArea(grown, ring.bounds),
+    corridor, corridorIndex, ring, ringIndex,
+    overlap: boxOverlapArea(grown, ring.bounds),
+    distance: ringDistanceToRouteMeters(route, ring),
+    weight: weight.get(corridor.id) ?? 0,
   })))
-    .filter(candidate => candidate.overlap > 0)
-    .sort((a, b) => (b.overlap - a.overlap) || (a.corridorIndex - b.corridorIndex) || (a.ringIndex - b.ringIndex));
+    .filter(candidate => candidate.overlap > 0 && candidate.weight > 0)
+    // Most of the route first, then the nearest ring of that corridor.
+    .sort((a, b) => (b.weight - a.weight) || (a.distance - b.distance) || (b.overlap - a.overlap)
+      || (a.corridorIndex - b.corridorIndex) || (a.ringIndex - b.ringIndex));
 
   const chosen: Array<{ corridor: CorridorPolygons; corridorIndex: number; ringIndex: number; ring: CorridorRing }> = [];
   let perimeterMeters = 0;

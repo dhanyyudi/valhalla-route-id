@@ -7,7 +7,7 @@
  * "Nonaktif changes nothing" checkable — with the constraint off, the exclusion list is empty and
  * the request builder produces exactly the request it produced before this feature existed.
  */
-import { findCorridorCrossings } from './gage-crossing';
+import { findCorridorCrossings, type CrossingReport } from './gage-crossing';
 import {
   REQUEST_PERIMETER_BUDGET_METERS,
   encodeExcludePolygons,
@@ -44,10 +44,19 @@ export interface GageRequestInput {
 export interface GagePlan {
   /** The rule's verdict: status, Indonesian reason and the window in force. */
   evaluation: GanjilGenapEvaluation;
+  /** Corridors the geometry in hand already runs through, before any exclusion. */
+  crossings: CrossingReport;
   /** Corridors inside the route's reach that the request asks Valhalla to avoid. */
   excluded: CorridorPolygons[];
-  /** Corridors only partly covered: the budget paid for some of their rings, not all. */
-  partial: CorridorPolygons[];
+  /**
+   * Corridors only partly covered: the budget paid for some of their rings, not all.
+   *
+   * Without the ring indices the panel could only say "sebagian: Jl. Sudirman", which reads as though
+   * the whole corridor were excluded. Measured against the deployed Worker, the panel did exactly
+   * that while the ring actually sent belonged to Jl. Rasuna Said — a report that names the wrong
+   * street is worse than one that names none.
+   */
+  partial: Array<{ corridor: CorridorPolygons; ringIndexes: number[] }>;
   /** How many rings the request carries. */
   ringsSent: number;
   /**
@@ -111,20 +120,28 @@ export function planGageRequest(input: GageRequestInput): GagePlan {
     route: input.geometry,
   });
 
+  // The corridors the geometry already runs through. The selector ranks by this set and the panel
+  // reports it, so the two can never disagree about what counts as "on this route".
+  const crossings = findCorridorCrossings(input.geometry, input.corridors);
   if (evaluation.status !== 'restricted') {
-    return { evaluation, excluded: [], partial: [], ringsSent: 0, excludePolygons: [], perimeterMeters: 0, restricted: false };
+    return { evaluation, crossings, excluded: [], partial: [], ringsSent: 0, excludePolygons: [], perimeterMeters: 0, restricted: false };
   }
 
-  const selection = selectCorridorsForRoute(
-    input.geometry,
-    input.corridors,
-    input.bufferMeters,
-    input.budgetMeters ?? REQUEST_PERIMETER_BUDGET_METERS,
-  );
+  const selection = selectCorridorsForRoute({
+    route: input.geometry,
+    corridors: input.corridors,
+    bufferMeters: input.bufferMeters,
+    budgetMeters: input.budgetMeters ?? REQUEST_PERIMETER_BUDGET_METERS,
+    crossed: crossings.corridors,
+  });
   return {
     evaluation,
+    crossings,
     excluded: selection.selected,
-    partial: selection.omitted,
+    partial: selection.omitted.map(corridor => ({
+      corridor,
+      ringIndexes: selection.rings.filter(entry => entry.corridor.id === corridor.id).map(entry => entry.ringIndex),
+    })),
     ringsSent: selection.rings.length,
     excludePolygons: encodeExcludePolygons(selection.rings),
     perimeterMeters: selection.perimeterMeters,
@@ -138,6 +155,3 @@ export function planGageRequest(input: GageRequestInput): GagePlan {
  * @param corridors - The same corridor data the request was planned from.
  * @returns The crossing report the panel shows after a route.
  */
-export function crossingsForRoute(geometry: LngLat[], corridors: CorridorPolygons[]) {
-  return findCorridorCrossings(geometry, corridors);
-}

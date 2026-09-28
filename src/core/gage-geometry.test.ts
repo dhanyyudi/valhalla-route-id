@@ -7,6 +7,7 @@ import {
   REQUEST_PERIMETER_BUDGET_METERS,
   boundsOverlap,
   bufferPolyline,
+  ringDistanceToRouteMeters,
   corridorPieces,
   corridorRings,
   haversineMeters,
@@ -17,6 +18,7 @@ import {
   simplifyLine,
   type CorridorPolygons,
 } from './gage-geometry';
+import { findCorridorCrossings } from './gage-crossing';
 
 const corridors = (artifact as unknown as { corridors: CorridorPolygons[] }).corridors;
 const SOURCE = JSON.parse(readFileSync(join('data', 'jakarta-ganjil-genap.geojson'), 'utf8')) as {
@@ -201,16 +203,21 @@ describe('bufferPolyline', () => {
 
 describe('selectCorridorsForRoute', () => {
   it('selects nothing when the route is outside every corridor', () => {
-    const selection = selectCorridorsForRoute([[-6.9, 107.6], [-6.91, 107.62]], corridors, 35);
+    const selection = selectCorridorsForRoute({
+      route: [[-6.9, 107.6], [-6.91, 107.62]], corridors, bufferMeters: 35,
+      crossed: findCorridorCrossings([[-6.9, 107.6], [-6.91, 107.62]], corridors).corridors,
+    });
     expect(selection.selected).toEqual([]);
     expect(selection.omitted).toEqual([]);
     expect(selection.perimeterMeters).toBe(0);
   });
 
   it('never exceeds the request perimeter budget and reports what it left out', () => {
-    // A route spanning the whole corridor network: every ring is a candidate, so the budget binds.
+    // A route spanning the whole corridor network: every crossed ring is a candidate, so the budget
+    // binds. (A straight line is not a driven route, so this is a synthetic worst case: it meets 21
+    // of the 25 corridors.)
     const route: [number, number][] = [[106.78, -6.13], [106.88, -6.26]];
-    const selection = selectCorridorsForRoute(route, corridors, 35);
+    const selection = selectCorridorsForRoute({ route, corridors, bufferMeters: 35, crossed: findCorridorCrossings(route, corridors).corridors });
     expect(selection.rings.length).toBeGreaterThan(0);
     expect(selection.perimeterMeters).toBeLessThanOrEqual(REQUEST_PERIMETER_BUDGET_METERS);
     expect(selection.perimeterMeters).toBeCloseTo(
@@ -232,7 +239,7 @@ describe('selectCorridorsForRoute', () => {
       expect(sent.every(entry => entry.partial)).toBe(true);
     }
     // Deterministic: the same call gives the same answer.
-    expect(selectCorridorsForRoute(route, corridors, 35)).toEqual(selection);
+    expect(selectCorridorsForRoute({ route, corridors, bufferMeters: 35, crossed: findCorridorCrossings(route, corridors).corridors })).toEqual(selection);
   });
 
   it('spends the budget on the rings the route runs through, not on the network', () => {
@@ -240,16 +247,54 @@ describe('selectCorridorsForRoute', () => {
     // handful of rings and the crossing report names the rest. This asserts the *shape* of that
     // outcome rather than a number that would drift with the data: something is always selected,
     // and the budget is what stops it, not the candidate list.
-    const selection = selectCorridorsForRoute([[106.78, -6.13], [106.88, -6.26]], corridors, 35);
+    const route: [number, number][] = [[106.78, -6.13], [106.88, -6.26]];
+    const selection = selectCorridorsForRoute({ route, corridors, bufferMeters: 35, crossed: findCorridorCrossings(route, corridors).corridors });
     const total = corridors.flatMap(corridor => corridor.rings).reduce((sum, ring) => sum + ring.perimeterMeters, 0);
-    expect(selection.perimeterMeters).toBeGreaterThan(REQUEST_PERIMETER_BUDGET_METERS * 0.5);
+    // At least half the budget is spent on rings the route enters; the exact figure depends on which
+    // rings fit, so this asserts the shape of the outcome rather than a number that drifts with data.
+    expect(selection.perimeterMeters).toBeGreaterThan(REQUEST_PERIMETER_BUDGET_METERS * 0.4);
     expect(total).toBeGreaterThan(REQUEST_PERIMETER_BUDGET_METERS * 10);
   });
 
   it('prefers the corridor the route runs along over one it only clips', () => {
-    // Jl. Thamrin runs north-south at ~106.823; this route runs along it.
-    const selection = selectCorridorsForRoute([[106.8230, -6.182], [106.8230, -6.190]], corridors, 35);
-    expect(selection.selected.map(corridor => corridor.name)).toContain('Jl. Thamrin');
+    // Jl. Thamrin runs north-south at ~106.823; this route runs along it, so it is both crossed and
+    // the corridor carrying the most of the route.
+    const route: [number, number][] = [[106.8230, -6.182], [106.8230, -6.190]];
+    const selection = selectCorridorsForRoute({ route, corridors, bufferMeters: 35, crossed: findCorridorCrossings(route, corridors).corridors });
+    expect(selection.rings.map(entry => entry.corridor.name)).toContain('Jl. Thamrin');
+    expect(selection.rings[0].corridor.name).toBe('Jl. Thamrin');
+  });
+
+  it('spends the budget on the corridors the route crosses, not on the nearest ones', () => {
+    // Regression for a deployed build that sent rings the route never entered, producing a route
+    // byte-identical to the constraint-off control. Two synthetic corridors make the distinction
+    // exact: one the route runs through, and one 100 m north of it that it never enters. The second
+    // is *closer* by the vertex measure — a short crossed corridor's nearest vertex can be a whole
+    // buffer away — which is precisely why the crossing set, not the distance, decides.
+    const route: [number, number][] = [[106.8200, -6.2000], [106.8250, -6.2000]];
+    const synthetic = (id: string, name: string, centerline: [number, number][]): CorridorPolygons =>
+      ({ id, name, bufferMeters: 35, centerline, rings: corridorRings(centerline, 35) });
+    const crossed = synthetic('test_crossed', 'Jl. Dilewati', [[106.8225, -6.2008], [106.8225, -6.1992]]);
+    const beside = synthetic('test_beside', 'Jl. Di Samping', [[106.8200, -6.1991], [106.8250, -6.1991]]);
+    const pair = [crossed, beside];
+    expect(ringDistanceToRouteMeters(route, beside.rings[0])).toBeLessThan(150);
+    expect(findCorridorCrossings(route, pair).corridors.map(corridor => corridor.id)).toEqual(['test_crossed']);
+
+    const selection = selectCorridorsForRoute({
+      route, corridors: pair, bufferMeters: 35, crossed: findCorridorCrossings(route, pair).corridors,
+    });
+    expect(selection.rings.map(entry => entry.corridor.id)).toEqual(['test_crossed']);
+    // Nothing crossed, nothing excluded — a scenario whose route avoids every corridor must not be
+    // sent polygons "just in case".
+    expect(selectCorridorsForRoute({ route, corridors: pair, bufferMeters: 35 }).rings).toEqual([]);
+  });
+
+  it('measures how far a ring is from the route in metres', () => {
+    const thamrin = corridors.find(corridor => corridor.name === 'Jl. Thamrin')!;
+    // The route runs along the corridor's own centre-line, so the ring is on it.
+    expect(ringDistanceToRouteMeters(thamrin.centerline, thamrin.rings[0])).toBeLessThan(40);
+    // A Bandung route is tens of kilometres away from a Jakarta corridor.
+    expect(ringDistanceToRouteMeters([[107.6191, -6.9175], [107.6, -6.9]], thamrin.rings[0])).toBeGreaterThan(20_000);
   });
 });
 

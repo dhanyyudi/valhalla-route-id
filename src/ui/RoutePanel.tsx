@@ -383,13 +383,31 @@ function GanjilGenap() {
 
       {plan.restricted ? (
         <p data-testid="gage-request" className="mt-1 text-xs">
-          Permintaan membawa exclude_polygons: {plan.excludePolygons.length} ring ({(plan.perimeterMeters / 1000).toFixed(1)} km dari batas 10 km per permintaan).
+          Perkiraan permintaan: exclude_polygons {plan.excludePolygons.length} ring ({(plan.perimeterMeters / 1000).toFixed(1)} km dari batas 10 km per permintaan).
           {plan.excluded.length > 0 ? ` Ruas utuh: ${plan.excluded.map(corridor => corridor.name).join(', ')}.` : ''}
-          {plan.partial.length > 0 ? ` Sebagian: ${plan.partial.map(corridor => corridor.name).join(', ')}.` : ''}
+          {plan.partial.length > 0
+            ? ` Sebagian (bukan seluruh ruas): ${plan.partial.map(entry => `${entry.corridor.name} potongan ${entry.ringIndexes.map(index => index + 1).join('/')}`).join(', ')}.`
+            : ''}
         </p>
       ) : (
         <p data-testid="gage-request" className="mt-1 text-xs opacity-80">Permintaan tidak membawa exclude_polygons.</p>
       )}
+
+      {/*
+        What the last run actually sent, which is not always what the line above says: before the
+        first route the plan is built from the waypoints, and after it from the route geometry, so a
+        second run of the same scenario can legitimately carry different rings. Showing only the
+        recomputed plan let the panel name Jl. Sudirman for a ring that belonged to Jl. Rasuna Said.
+      */}
+      {gage && gage.excludePolygons.length > 0 ? (
+        <p data-testid="gage-sent" className="mt-1 text-xs opacity-80">
+          Dikirim pada rute terakhir: {gage.excludePolygons.length} ring ({(gage.perimeterMeters / 1000).toFixed(1)} km)
+          {gage.partial.length > 0
+            ? ` — sebagian: ${gage.partial.map(entry => entry.corridor.name).join(', ')}`
+            : ''}
+          {gage.excluded.length > 0 ? ` — utuh: ${gage.excluded.map(corridor => corridor.name).join(', ')}` : ''}.
+        </p>
+      ) : null}
 
       {result && crossings ? (
         <p data-testid="gage-crossing" className="mt-1 text-xs font-bold">

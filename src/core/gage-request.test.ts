@@ -121,8 +121,13 @@ describe('planGageRequest', () => {
     const sentIds = new Set(restricted.excluded.map(corridor => corridor.id));
     expect(sentIds.size).toBe(restricted.excluded.length);
     expect(names.length).toBeGreaterThan(0);
-    // Whatever the budget refused is still visible to the panel, never silently dropped.
-    expect(restricted.partial.every(corridor => !sentIds.has(corridor.id))).toBe(true);
+    // Whatever the budget refused is still visible to the panel, never silently dropped, and it says
+    // which chunk went rather than implying the whole corridor did.
+    expect(restricted.partial.every(entry => !sentIds.has(entry.corridor.id))).toBe(true);
+    for (const entry of restricted.partial) {
+      expect(entry.ringIndexes.length).toBeGreaterThan(0);
+      expect(entry.ringIndexes.every(index => index >= 0 && index < entry.corridor.rings.length)).toBe(true);
+    }
   });
 
   it('evaluates "now" against the injected clock rather than the host time', () => {

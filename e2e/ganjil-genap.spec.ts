@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -29,8 +29,9 @@ const RESTRICTED_PARITY = 'odd';
 
 /** Ceiling for one route; the client also stops a route after 10 minutes. */
 const ROUTE_BUDGET_MS = 600_000;
-/** Where the run's numbers are written so the report quotes a measurement, not a recollection. */
-const EVIDENCE = path.join('.superpowers', 'docs', 'reports', 'gage-e2e.json');
+/** Where each run's numbers are written so the report quotes a measurement, not a recollection. */
+const EVIDENCE_JAKARTA = path.join('.superpowers', 'docs', 'reports', 'gage-e2e-jakarta.json');
+const EVIDENCE_SUDIRMAN = path.join('.superpowers', 'docs', 'reports', 'gage-e2e-sudirman.json');
 
 interface RunEvidence {
   label: string;
@@ -90,8 +91,28 @@ async function readRun(page: import('@playwright/test').Page, label: string): Pr
   };
 }
 
-test('ganjil-genap: restricted at 07:00 WIB, then the Nonaktif control', async ({ page }, testInfo) => {
-  test.setTimeout(900_000);
+/** The pair whose exclusion is visible: a 4.4 km hop west-to-east across Jl. Sudirman. */
+const SUDIRMAN_WEST = '-6.20850, 106.81200';
+const SUDIRMAN_EAST = '-6.20850, 106.83200';
+
+/**
+ * One restricted run and its Nonaktif control over the given pair.
+ *
+ * @param page - The browser page.
+ * @param testInfo - Used for the per-run screenshots.
+ * @param points - The two stops, as the paste box takes them.
+ * @param evidenceFile - Where this run's numbers are written.
+ * @param label - Names the run in the log and in the evidence.
+ * @returns Both runs' readouts and whether their geometries matched.
+ */
+async function restrictedThenControl(
+  page: import('@playwright/test').Page,
+  testInfo: import('@playwright/test').TestInfo,
+  points: [string, string],
+  evidenceFile: string,
+  label: string,
+) {
+  testInfo.setTimeout(900_000);
 
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
   const map = page.getByTestId('map');
@@ -102,7 +123,7 @@ test('ganjil-genap: restricted at 07:00 WIB, then the Nonaktif control', async (
   // pinned by the builder unit test; here it only has to be a drawn, non-empty layer.
   await expect(map).toHaveAttribute('data-gage-rings', /^[1-9]\d*$/, { timeout: 30_000 });
 
-  for (const point of [JAKARTA, BANDUNG_LIKE]) {
+  for (const point of points) {
     await page.getByTestId('paste-input').fill(point);
     await page.getByTestId('paste-add').click();
   }
@@ -114,11 +135,11 @@ test('ganjil-genap: restricted at 07:00 WIB, then the Nonaktif control', async (
   await page.getByTestId(`parity-${RESTRICTED_PARITY}`).click();
   await expect(page.getByTestId(`parity-${RESTRICTED_PARITY}`)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('gage-status')).toContainText('Kena ganjil-genap');
-  // The plan is live before the route runs: the panel already says what the request will carry.
+  // The estimate is live before the route runs: the panel already says what the request will carry.
   await expect(page.getByTestId('gage-request')).toContainText('exclude_polygons');
 
-  await route(page, 'restricted');
-  const restricted = await readRun(page, 'restricted');
+  await route(page, `${label}-restricted`);
+  const restricted = await readRun(page, `${label}-restricted`);
 
   // The request the app actually handed the SDK — read from the app, not reconstructed here.
   expect(restricted.excludePolygons).toBeGreaterThan(0);
@@ -133,27 +154,31 @@ test('ganjil-genap: restricted at 07:00 WIB, then the Nonaktif control', async (
   expect(restricted.crossing).toMatch(/ganjil-genap/);
   expect(restricted.distance).toMatch(/km$/);
 
-  await page.screenshot({ path: testInfo.outputPath('ganjil-genap-restricted.png') });
+  await page.screenshot({ path: testInfo.outputPath(`${label}-restricted.png`) });
+  // What the run actually sent, beside the estimate — the two can differ by design.
+  await expect(page.getByTestId('gage-sent')).toContainText('Dikirim pada rute terakhir');
   console.log(`E2E_RESULT ${JSON.stringify(restricted)}`);
 
   // ── The control run: same scenario, constraint off. ────────────────────────────────────────────
   await page.getByTestId('parity-off').click();
   await expect(page.getByTestId('gage-status')).toContainText('Tidak berlaku');
   await expect(page.getByTestId('gage-request')).toContainText('tidak membawa exclude_polygons');
-  await route(page, 'nonaktif');
-  const control = await readRun(page, 'nonaktif');
+  await route(page, `${label}-nonaktif`);
+  const control = await readRun(page, `${label}-nonaktif`);
 
   expect(control.excludePolygons).toBe(0);
   expect(control.request.exclude_polygons).toBeUndefined();
+  await expect(page.getByTestId('gage-sent')).toHaveCount(0);
   expect(control.gageActive).toBe('false');
   expect(control.distance).toMatch(/km$/);
-  await page.screenshot({ path: testInfo.outputPath('ganjil-genap-nonaktif.png') });
+  await page.screenshot({ path: testInfo.outputPath(`${label}-nonaktif.png`) });
   console.log(`E2E_RESULT ${JSON.stringify(control)}`);
 
   const geometryIdentical = restricted.coordinates === control.coordinates
     && restricted.distance === control.distance && restricted.duration === control.duration;
   const evidence = {
     baseUrl: BASE_URL,
+    pair: points,
     departure: DEPARTURE,
     restrictedParity: RESTRICTED_PARITY,
     restricted,
@@ -163,6 +188,60 @@ test('ganjil-genap: restricted at 07:00 WIB, then the Nonaktif control', async (
     at: new Date().toISOString(),
   };
   console.log(`E2E_COMPARE ${JSON.stringify(evidence)}`);
-  mkdirSync(path.dirname(EVIDENCE), { recursive: true });
-  writeFileSync(EVIDENCE, `${JSON.stringify(evidence, null, 2)}\n`);
+  mkdirSync(path.dirname(evidenceFile), { recursive: true });
+  writeFileSync(evidenceFile, `${JSON.stringify(evidence, null, 2)}\n`);
+  return { restricted, control, geometryIdentical };
+}
+
+test('ganjil-genap: restricted at 07:00 WIB on the long Jakarta pair, then the Nonaktif control', async ({ page }, testInfo) => {
+  test.setTimeout(900_000);
+  const { restricted, control, geometryIdentical } = await restrictedThenControl(
+    page, testInfo, [JAKARTA, BANDUNG_LIKE], EVIDENCE_JAKARTA, 'jakarta',
+  );
+  // The required pair. Both runs are reported exactly as measured, including the case where they
+  // come back byte-identical: the request carries exclude_polygons, the panel says so, and the
+  // crossing report is shown either way.
+  expect(restricted.gageStatus).toContain('Kena ganjil-genap');
+  expect(control.request.exclude_polygons).toBeUndefined();
+  console.log(`E2E_JAKARTA identical=${geometryIdentical} restricted=${restricted.distance} control=${control.distance} ` +
+    `crossings: "${restricted.crossing}"`);
+});
+
+test('ganjil-genap: the Sudirman pair shows what the browser can and cannot prove', async ({ page }, testInfo) => {
+  testInfo.setTimeout(900_000);
+  const { restricted, control, geometryIdentical } = await restrictedThenControl(
+    page, testInfo, [SUDIRMAN_WEST, SUDIRMAN_EAST], EVIDENCE_SUDIRMAN, 'sudirman',
+  );
+
+  // Stable facts, asserted: the restriction is evaluated, the request carries a ring whose
+  // coordinates are longitude-first and inside Jakarta, the constraint-off control carries none, and
+  // the crossing report is shown in both runs.
+  expect(restricted.gageStatus).toContain('Kena ganjil-genap');
+  expect(restricted.excludePolygons).toBeGreaterThan(0);
+  expect(control.request.exclude_polygons).toBeUndefined();
+  expect(restricted.crossing).not.toBe('');
+  expect(control.crossing).not.toBe('');
+
+  // What this pair cannot prove, measured rather than asserted: repeating the *identical* request in
+  // one session makes the browser runtime answer with different routes, so a single
+  // restricted-versus-control pair cannot attribute a difference to the exclusion. The three runs
+  // below are that measurement — same scenario, same request, three answers — and the Node adapter on
+  // the same release and the same WASM binary answers 4.695 km for the excluded request every time
+  // (see tools/smoke/gage-engine.test.ts, where the exclusion itself is proven to work).
+  const outcomes: string[] = [];
+  for (let index = 1; index <= 3; index += 1) {
+    await route(page, `sudirman-repeat-${index}`);
+    const repeat = await readRun(page, `sudirman-repeat-${index}`);
+    outcomes.push(`${repeat.distance}/${repeat.coordinates}`);
+    // The status bar keeps the previous value until the next result lands, so wait for the route
+    // button to come back before the next click reads it.
+    await page.waitForTimeout(1_500);
+  }
+  const distinct = [...new Set(outcomes)];
+  console.log(`E2E_SUDIRMAN identical=${geometryIdentical} restricted=${restricted.distance} control=${control.distance} ` +
+    `repeats=${JSON.stringify(distinct)} restrictedCrossings="${restricted.crossing}" controlCrossings="${control.crossing}"`);
+
+  const evidenceFile = EVIDENCE_SUDIRMAN;
+  const existing = JSON.parse(readFileSync(evidenceFile, 'utf8')) as Record<string, unknown>;
+  writeFileSync(evidenceFile, `${JSON.stringify({ ...existing, identicalRepeatOutcomes: distinct, identicalRepeatRuns: outcomes }, null, 2)}\n`);
 });
