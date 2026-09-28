@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { describeCrossings } from '../core/gage-crossing';
+import { wibInstant } from '../core/gage-request';
 import { parsePointInput } from '../core/point-input';
 import type { TimeMode } from '../core/request-builder';
 import type { PlateParity } from '../core/ganjil-genap';
@@ -271,6 +272,9 @@ function Profiles() {
 }
 
 function TimeControl({ timeMode, departure }: { timeMode: TimeMode; departure: string }) {
+  // A cleared or half-typed `datetime-local` box must look wrong here, not only in the verdict
+  // below: `planGageRequest` refuses to evaluate the rule without a readable time (M-6).
+  const invalid = timeMode !== 'now' && wibInstant(departure) === null;
   return (
     <section className="mt-3 border-t-3 border-nb-black pt-2">
       <h2 className="nb-title text-sm">Waktu (waktu lokal dataset)</h2>
@@ -292,7 +296,7 @@ function TimeControl({ timeMode, departure }: { timeMode: TimeMode; departure: s
         type="datetime-local"
         aria-label="Waktu keberangkatan atau kedatangan"
         data-testid="departure-input"
-        className="nb-input mt-2 w-full text-xs"
+        className={`nb-input mt-2 w-full text-xs${invalid ? ' border-nb-terracotta' : ''}`}
         value={departure}
         disabled={timeMode === 'now'}
         onChange={event => useScenario.getState().setTime(timeMode, event.target.value)}
@@ -341,20 +345,23 @@ function GanjilGenap() {
   const profile = useScenario(state => state.profile);
   const timeMode = useScenario(state => state.timeMode);
   const departure = useScenario(state => state.departure);
+  const waypoints = useScenario(state => state.waypoints);
   const result = useScenario(state => state.result);
   const gage = useScenario(state => state.gage);
   const crossings = useScenario(state => state.crossings);
 
   // Re-derived from the current controls rather than remembered, so changing the hour or the plate
-  // updates the verdict immediately. `result` and `waypoints` are read through the store inside
-  // `gagePlan()`, which is why the geometry is not a dependency of its own.
+  // updates the verdict immediately. `gagePlan()` reads `result` and `waypoints` through the store,
+  // so both are dependencies: without `waypoints` the panel kept saying "Semua titik berada di luar
+  // area Jakarta" while a Jakarta stop was being added, before the first route existed.
   const plan = useMemo(
     () => useScenario.getState().gagePlan(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [plateParity, profile, timeMode, departure, result],
+    [plateParity, profile, timeMode, departure, waypoints, result],
   );
 
-  const sent = gage?.excludePolygons.length ?? 0;
+  // Distinct corridors the request asked to avoid — `excluded` and `partial` never name the same
+  // corridor, so the sum is the corridor count the sentence interpolates, not a ring count.
+  const avoidedCorridors = plan.excluded.length + plan.partial.length;
   return (
     <section className="mt-3 border-t-3 border-nb-black pt-2" data-testid="gage-block">
       <h2 className="nb-title text-sm">Ganjil-genap</h2>
@@ -374,17 +381,27 @@ function GanjilGenap() {
       </div>
 
       <p data-testid="gage-status" className="mt-2 text-xs font-bold">
-        Status: {STATUS_TEXT[plan.evaluation.status] ?? plan.evaluation.status}
-        {plan.evaluation.window ? ` · ${plan.evaluation.window.label} ${plan.evaluation.window.startHour}:00–${plan.evaluation.window.endHour}:00 WIB` : ''}
-        {' · '}
-        {plan.evaluation.parts.isoDate} {String(plan.evaluation.parts.hour).padStart(2, '0')}:{String(plan.evaluation.parts.minute).padStart(2, '0')} WIB
+        Status: {plan.evaluation ? STATUS_TEXT[plan.evaluation.status] ?? plan.evaluation.status : 'tidak dievaluasi'}
+        {plan.evaluation?.window ? ` · ${plan.evaluation.window.label} ${plan.evaluation.window.startHour}:00–${plan.evaluation.window.endHour}:00 WIB` : ''}
+        {plan.evaluation
+          ? ` · ${plan.evaluation.parts.isoDate} ${String(plan.evaluation.parts.hour).padStart(2, '0')}:${String(plan.evaluation.parts.minute).padStart(2, '0')} WIB`
+          : ''}
       </p>
-      <p data-testid="gage-reason" className="mt-1 text-xs opacity-80">{plan.evaluation.reason}</p>
+      <p data-testid="gage-reason" className="mt-1 text-xs opacity-80">
+        {plan.evaluation?.reason ?? plan.refusal ?? ''}
+      </p>
+
+      {plan.refusal ? (
+        <p data-testid="gage-caution" role="alert" className="mt-1 font-bold text-nb-terracotta">
+          Isi waktu keberangkatan/kedatangan yang valid, atau pilih "Sekarang": selama tidak ada waktu
+          yang terbaca, ganjil-genap tidak dievaluasi dan rute tidak dihitung.
+        </p>
+      ) : null}
 
       {plan.restricted ? (
         <p data-testid="gage-request" className="mt-1 text-xs">
           {result
-            ? `Untuk rute di atas: exclude_polygons ${plan.excludePolygons.length} ring (${(plan.perimeterMeters / 1000).toFixed(1)} km).`
+            ? `Perkiraan bila rute ini dijalankan ulang: exclude_polygons ${plan.excludePolygons.length} ring (${(plan.perimeterMeters / 1000).toFixed(1)} km dari batas 10 km per permintaan).`
             : `Perkiraan permintaan: exclude_polygons ${plan.excludePolygons.length} ring (${(plan.perimeterMeters / 1000).toFixed(1)} km dari batas 10 km per permintaan).`}
           {plan.excluded.length > 0 ? ` Ruas utuh: ${plan.excluded.map(corridor => corridor.name).join(', ')}.` : ''}
           {plan.partial.length > 0
@@ -403,7 +420,7 @@ function GanjilGenap() {
       */}
       {gage && gage.excludePolygons.length > 0 ? (
         <p data-testid="gage-sent" className="mt-1 text-xs opacity-80">
-          Dikirim pada rute terakhir: {gage.excludePolygons.length} ring ({(gage.perimeterMeters / 1000).toFixed(1)} km)
+          Dikirim pada rute terakhir: {gage.excludePolygons.length} ring ({(gage.perimeterMeters / 1000).toFixed(1)} km dari batas 10 km per permintaan)
           {gage.partial.length > 0
             ? ` — sebagian: ${gage.partial.map(entry => `${entry.corridor.name} potongan ${entry.ringIndexes.map(index => index + 1).join('/')}`).join(', ')}`
             : ''}
@@ -413,7 +430,7 @@ function GanjilGenap() {
 
       {result && crossings ? (
         <p data-testid="gage-crossing" className="mt-1 text-xs font-bold">
-          {describeCrossings(crossings, sent)}
+          {describeCrossings(crossings, avoidedCorridors)}
         </p>
       ) : null}
     </section>
