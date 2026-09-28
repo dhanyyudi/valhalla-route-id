@@ -13,9 +13,11 @@
 // and bodies are streamed so a 2 GB archive never lands in the Worker's 128 MB heap.
 //
 // Invariant: a request carrying a `Range` header is answered with 206 (exact bytes)
-// or 416. It is never answered with 200. R2 silently serves the *whole* object for a
-// range it cannot satisfy, so a range that R2 ignores is detected and turned into a
-// 416 instead of a 206 that misdescribes the body.
+// or 416 — never with 200, and never with a 500. The deployed R2 binding *throws* for a
+// range it cannot satisfy, so a span that starts at or past EOF is settled against object
+// metadata before R2 is asked for it. The local simulator instead serves the *whole*
+// object for such a range, so a range R2 ignores is also detected and turned into a 416
+// rather than a 206 that misdescribes the body.
 
 const PREFIX = '/datasets/';
 const IMMUTABLE = 'public, max-age=31536000, immutable';
@@ -71,15 +73,19 @@ function parseRange(header: string | null): RequestedRange {
 }
 
 /**
- * The `Range` header to ask R2 for, re-serialised from the parse above so that the
- * bytes served are decided in exactly one place: R2 is asked to satisfy the span this
- * Worker already validated, and `servedRange` below checks that it did.
+ * The `Range` header to ask R2 for, re-serialised from the parse above so that the bytes
+ * served are decided in exactly one place: `fetch` has already rejected a span this Worker
+ * cannot serve, R2 is asked for the span that remains, and `servedRange` below checks that
+ * it honoured the request.
  *
- * R2's typed `R2Range` form is deliberately not used. It throws for a range it cannot
- * satisfy (`get: The requested range is not satisfiable (10039)`), which would turn a
- * routine client error into a 500 and make the outcome depend on matching an error
- * string. A `Range` header instead makes R2 serve the whole object, which the
- * cross-check detects and converts into a 416.
+ * R2's typed `R2Range` form is deliberately not used, because a range it cannot satisfy
+ * throws instead of degrading: the outcome would then depend on matching an error string.
+ * The `Range` header form is not a safe fallback either — the deployed bucket throws for
+ * exactly the same spans (`get: The requested range is not satisfiable (10039)`), which is
+ * what answered `500` / `error code: 1101` without a CORS grant before `fetch` started
+ * validating the span against object metadata first. The local simulator is the lenient
+ * one: it serves the whole object, which is why `servedRange` still verifies the offset R2
+ * reports.
  */
 function rangeHeader(requested: RequestedRange): Headers | undefined {
   switch (requested.kind) {
@@ -135,7 +141,10 @@ function servedRange(object: R2ObjectBody, requested: RequestedRange): ServedRan
   }
 }
 
-/** The size a satisfiable range resolves to, used to answer HEAD without a body. */
+/**
+ * The size a satisfiable range resolves to: how a HEAD is answered without a body, and how
+ * `fetch` rejects an unsatisfiable GET before R2 is asked for the span.
+ */
 function resolveAgainst(requested: RequestedRange, size: number): ServedRange | null {
   switch (requested.kind) {
     case 'none': return { offset: 0, length: size };
@@ -247,6 +256,18 @@ export default {
       const object = await env.GRAPH.head(key);
       if (object === null) return problem('Expected graph object is missing.', 404);
       return unsatisfiable(object.size);
+    }
+
+    // A span that starts at or past EOF must be answered here, not by R2: the deployed
+    // binding throws for a range it cannot satisfy, and that throw is what reached the
+    // client as a 500 with no CORS grant. Only the two shapes whose satisfiability depends
+    // on the object's size pay for the lookup — a `none` request has no span to check, and
+    // a suffix range is one R2 resolves (and clamps) itself — so a whole-object read still
+    // costs a single R2 operation.
+    if (requested.kind === 'bounded' || requested.kind === 'open') {
+      const metadata = await env.GRAPH.head(key);
+      if (metadata === null) return problem('Expected graph object is missing.', 404);
+      if (resolveAgainst(requested, metadata.size) === null) return unsatisfiable(metadata.size);
     }
 
     const object = await env.GRAPH.get(key, requested.kind === 'none' ? undefined : { range: rangeHeader(requested) });

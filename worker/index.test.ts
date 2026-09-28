@@ -1,5 +1,6 @@
 import { env, SELF } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
+import worker from './index';
 
 // 2048 bytes of non-repeating-enough filler: every byte value is derived from its
 // index, so a wrong offset or a wrong length cannot accidentally compare equal.
@@ -21,6 +22,49 @@ beforeAll(async () => {
     { httpMetadata: { contentType: 'application/json' } },
   );
 });
+
+/**
+ * Production R2 has two behaviours around an unsatisfiable range that the local simulator
+ * does not, and both are what turned a ranged GET whose start is at or past EOF into
+ * `HTTP 500` / `error code: 1101` on the deployed Worker. This wrapper restores them around
+ * the real local bucket:
+ *   * every ranged read is recorded in `askedFor`, so a test can assert the span the handler
+ *     asked for rather than what the simulator chose to do with it;
+ *   * with `rejects`, a read for a span that starts at or past EOF throws the way production
+ *     does (`get: The requested range is not satisfiable (10039)`).
+ */
+function productionLikeGraph(bucket: R2Bucket, askedFor: string[], rejects: boolean): R2Bucket {
+  return new Proxy(bucket, {
+    get(target, property) {
+      // Every other method is handed back bound to the real bucket: the runtime's bindings
+      // reject a call whose `this` is the proxy ("Illegal invocation").
+      if (property !== 'get') {
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return async (key: string, options?: R2GetOptions) => {
+        const range = options?.range;
+        const header = range instanceof Headers ? range.get('Range') : null;
+        if (header !== null) {
+          askedFor.push(header);
+          const size = (await bucket.head(key))?.size ?? 0;
+          // `bytes=<start>-[<end>]` is the only shape that can be unsatisfiable by starting at
+          // or past EOF; a suffix range of a non-empty object is always satisfiable.
+          const start = Number(/^bytes=(\d+)-/.exec(header)?.[1]);
+          if (rejects && Number.isSafeInteger(start) && start >= size) {
+            throw new Error('get: The requested range is not satisfiable (10039)');
+          }
+        }
+        return bucket.get(key, options);
+      };
+    },
+  }) as R2Bucket;
+}
+
+/** Drives the handler directly, against a bucket that behaves like the deployed one. */
+function fetchWithGraph(graph: R2Bucket, init: RequestInit): Promise<Response> {
+  return worker.fetch(new Request(origin(GRAPH), init), { ASSETS: env.ASSETS, GRAPH: graph });
+}
 
 describe('/datasets range handler', () => {
   it('answers a ranged GET with 206, the exact span, the manifest ETag and no encoding', async () => {
@@ -158,6 +202,52 @@ describe('/datasets range handler', () => {
       expect(response.headers.get('Content-Range'), `Range: ${range}`).toBe('bytes */2048');
       expect((await response.arrayBuffer()).byteLength, `Range: ${range}`).toBeLessThan(2048);
     }
+  });
+
+  it('decides 416 from metadata when the range starts at or past EOF, without asking R2 for the span', async () => {
+    // Pre-fix, the handler handed this span to R2 and only inspected what came back. The
+    // simulator ignores the range and serves the whole object, which the cross-check then
+    // turns into a 416 — so a status-only assertion passes on that code and hides the fact
+    // that production R2 throws on the very same call. The recorded reads are therefore the
+    // part of this test that fails on it.
+    const askedFor: string[] = [];
+    const graph = productionLikeGraph(env.GRAPH, askedFor, false);
+    const ranges = [
+      `bytes=${BODY.byteLength}-`,
+      `bytes=${BODY.byteLength + 1}-`,
+      'bytes=999999999999-',
+      `bytes=${BODY.byteLength}-${BODY.byteLength + 10}`,
+    ];
+
+    for (const range of ranges) {
+      const response = await fetchWithGraph(graph, { headers: { Range: range, Origin: 'http://localhost:5173' } });
+      expect(response.status, `Range: ${range}`).toBe(416);
+      expect(response.headers.get('Content-Range'), `Range: ${range}`).toBe(`bytes */${BODY.byteLength}`);
+      expect(response.headers.get('Access-Control-Allow-Origin'), `Range: ${range}`).toBe('*');
+      expect(response.headers.get('Access-Control-Expose-Headers'), `Range: ${range}`).toBe(
+        'Content-Range, Content-Length, ETag, Last-Modified',
+      );
+      expect((await response.arrayBuffer()).byteLength, `Range: ${range}`).toBeLessThan(BODY.byteLength);
+    }
+
+    expect(askedFor).toEqual([]);
+  });
+
+  it('survives an R2 that throws for an unsatisfiable range instead of ignoring it', async () => {
+    // The handler has no `try`/`catch`, so this is the production failure itself: whatever
+    // escapes here is the `HTTP 500` with `error code: 1101` and no CORS grant that the
+    // deployed endpoint returned, which is why the span must not be requested at all.
+    const askedFor: string[] = [];
+    const graph = productionLikeGraph(env.GRAPH, askedFor, true);
+
+    for (const range of [`bytes=${BODY.byteLength}-`, 'bytes=999999999999-']) {
+      const response = await fetchWithGraph(graph, { headers: { Range: range, Origin: 'http://localhost:5173' } });
+      expect(response.status, `Range: ${range}`).toBe(416);
+      expect(response.headers.get('Content-Range'), `Range: ${range}`).toBe(`bytes */${BODY.byteLength}`);
+      expect(response.headers.get('Access-Control-Allow-Origin'), `Range: ${range}`).toBe('*');
+    }
+
+    expect(askedFor).toEqual([]);
   });
 
   it('never answers a request that carries a Range header with 200', async () => {
