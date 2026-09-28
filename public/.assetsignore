@@ -1,0 +1,6 @@
+# The graph dataset is served from R2 by the Worker at /datasets/*, never as a static
+# asset: one release is ~2 GB and Workers assets cap at 25 MiB per file, so a build that
+# left public/datasets/ in dist/ would make `wrangler deploy` (and the Worker test run)
+# fail on "Asset too large". Vite still serves public/datasets/ in `vite dev`, and
+# `pnpm serve:dataset` serves a release for local work.
+datasets/
