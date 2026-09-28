@@ -297,6 +297,26 @@ docs/datasets/             the build record and the native-versus-WASM verificat
                            published release
 ```
 
+## Deploy from Git (Cloudflare Workers Builds)
+
+The Worker can also deploy itself from this repository: in the Cloudflare dashboard, connect the
+`valhalla-route-id` Worker to the GitHub repository with
+
+| Setting | Value |
+|---|---|
+| Production branch | `main` |
+| Build command | `pnpm run build:cloudflare` |
+| Deploy command | `npx wrangler deploy` |
+| Non-production branch deploy command | `npx wrangler versions upload` |
+| Build variables | `VITE_MANIFEST_URL` (the release manifest URL), `NODE_VERSION=22.22.2` |
+
+`scripts/cloudflare-build.sh` fetches the WASM runtime and its license texts from the public
+`wasm-runtime-v1` and `ci-fixtures-v1` releases over HTTPS (the build image has no `gh` login), packages
+the SDK — which re-checks the runtime against `native/runtime-lock.json` — and builds the SPA. It
+refuses to build without `VITE_MANIFEST_URL`, since the app would deploy but could not load a dataset.
+Use either this or the `deploy` job below, not both: leave the `PROD_URL` repository variable unset so
+the job stays skipped. The build does not wait for `verify`, so a push to `main` deploys even if CI fails.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs `verify` on every push and pull request — install, typecheck, unit
