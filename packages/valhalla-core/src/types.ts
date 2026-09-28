@@ -8,6 +8,17 @@ export interface Coordinates {
 /** Validated road travel profiles. Transit and combined journeys are not supported. */
 export type Costing = 'auto' | 'motorcycle' | 'motor_scooter' | 'truck' | 'bicycle' | 'pedestrian';
 
+/**
+ * One request's `exclude_polygons` value.
+ *
+ * The array-of-rings form (`[[[lon, lat], ...], ...]`) is what native actually acts on; the
+ * comma-separated string form is accepted by the API and then **silently ignored**, because an
+ * entry that is neither an array nor an object leaves the parser with an empty ring. Both shapes
+ * are typed here so a caller is not pushed towards the one that does nothing; nothing validates or
+ * rewrites the value, it is forwarded verbatim.
+ */
+export type ExcludePolygons = string[] | number[][][];
+
 /** Per-profile option allowlists, copied from the pinned Valhalla sources (src/sif/*.cc). */
 export const COSTING_OPTIONS: Record<Costing, readonly string[]> = {
   auto: ['use_highways', 'use_tolls', 'use_distance', 'top_speed', 'alley_factor', 'restriction_probability'],
@@ -236,7 +247,7 @@ export interface ExtendedRouteFields {
   }>;
   date_time?: { type: 1 | 2; value: string };
   alternates?: number;
-  exclude_polygons?: string[];
+  exclude_polygons?: ExcludePolygons;
   exclude_locations?: Coordinates[];
   avoid_edges?: number[];
   shape_format?: 'polyline6' | 'polyline5' | 'geojson' | 'no_shape';
