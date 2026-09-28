@@ -25,14 +25,14 @@
  * loader's default 10 s per-request timeout. Run it the way a browser client behaves — with the
  * Worker's own `Cache-Control: immutable` honoured — by preloading the cache:
  *
- *   node --import tools/publish/client-cache.mjs tools/publish/verify-deployed.mjs \
+ *   node --import ./tools/publish/client-cache.mjs tools/publish/verify-deployed.mjs \
  *     --manifest-url https://<host>/datasets/<release>/manifest.json
  *
  * The route step then reports the network bytes (the distinct ranges, fetched from the deployed
  * origin) separately from the cache hits the loader re-read and re-validated locally.
  *
  * Usage:
- *   node [--import tools/publish/client-cache.mjs] tools/publish/verify-deployed.mjs \
+ *   node [--import ./tools/publish/client-cache.mjs] tools/publish/verify-deployed.mjs \
  *     --manifest-url https://<host>/datasets/<release>/manifest.json [--timeout-ms 60000] [--skip-route]
  */
 import { createHash } from 'node:crypto';
@@ -80,7 +80,7 @@ const { values } = parseArgs({ options: {
   help: { type: 'boolean' },
 } });
 if (values.help || !values['manifest-url']) {
-  console.log('Usage: node [--import tools/publish/client-cache.mjs] tools/publish/verify-deployed.mjs --manifest-url https://<host>/datasets/<release>/manifest.json [--release-dir public/datasets/<release>] [--timeout-ms 60000] [--range 1000000000-1000010239] [--skip-route]');
+  console.log('Usage: node [--import ./tools/publish/client-cache.mjs] tools/publish/verify-deployed.mjs --manifest-url https://<host>/datasets/<release>/manifest.json [--release-dir public/datasets/<release>] [--timeout-ms 60000] [--range 1000000000-1000010239] [--skip-route]');
   process.exit(values.help ? 0 : 1);
 }
 const requestTimeoutMs = Number(values['timeout-ms'] ?? REQUEST_TIMEOUT_MS);
@@ -206,7 +206,7 @@ if (!values['skip-route']) {
         console.error(`    (diagnostics unavailable: ${diagnosticError.message})`);
       }
       console.error('    This request needs thousands of tile reads; without a client cache the SDK re-downloads each one.');
-      console.error('    Re-run with the browser-equivalent immutable cache: node --import tools/publish/client-cache.mjs ...');
+      console.error('    Re-run with the browser-equivalent immutable cache: node --import ./tools/publish/client-cache.mjs ...');
       problems.push(`route failed: ${error.code ?? error.name}: ${error.message}`);
     }
   } finally {

@@ -2,8 +2,11 @@
 /**
  * Browser-style immutable cache for a Node client, loaded as a preload module:
  *
- *   node --import tools/publish/client-cache.mjs tools/publish/verify-deployed.mjs \
+ *   node --import ./tools/publish/client-cache.mjs tools/publish/verify-deployed.mjs \
  *     --manifest-url https://<host>/datasets/<release>/manifest.json
+ *
+ * The `./` is load-bearing: `--import` takes an import specifier, not a path, so a bare
+ * `tools/...` is resolved as a package name and fails with ERR_MODULE_NOT_FOUND.
  *
  * Why this exists: the Worker serves every dataset object with
  * `Cache-Control: public, max-age=31536000, immutable` (`worker/index.ts`), and a browser keeps

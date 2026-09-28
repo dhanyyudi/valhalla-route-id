@@ -69,7 +69,7 @@ the app must not ship them without addressing it).
 
 ## Deployed verification
 
-`node --import tools/publish/client-cache.mjs tools/publish/verify-deployed.mjs --manifest-url
+`node --import ./tools/publish/client-cache.mjs tools/publish/verify-deployed.mjs --manifest-url
 https://valhalla-route-id.gislabs.workers.dev/datasets/indonesia-260926-eab7ae90e4197185/manifest.json`
 (exit 0):
 
@@ -148,7 +148,7 @@ node tools/publish/manifest-etags.mjs --release indonesia-260926-eab7ae90e419718
   --output build/hosting/indonesia-260926-eab7ae90e4197185-manifest.json      # fails if an object is missing or changed
 npx wrangler r2 object put --remote valhalla-route-id-graph/indonesia-260926-eab7ae90e4197185/manifest.json \
   --file build/hosting/indonesia-260926-eab7ae90e4197185-manifest.json --content-type application/json
-node --import tools/publish/client-cache.mjs tools/publish/verify-deployed.mjs \
+node --import ./tools/publish/client-cache.mjs tools/publish/verify-deployed.mjs \
   --manifest-url https://valhalla-route-id.gislabs.workers.dev/datasets/indonesia-260926-eab7ae90e4197185/manifest.json
 ```
 
