@@ -273,11 +273,13 @@ test('ganjil-genap: the Sudirman pair shows what the browser can and cannot prov
   // What this pair cannot prove, measured rather than asserted: a single restricted-versus-control
   // pair cannot attribute a difference to the exclusion on its own. The three runs below are that
   // measurement — the scenario is still Nonaktif from the control above, so all three send the
-  // *identical* request and each one's own result is awaited before it is read. The runtime answers
-  // identical requests identically (the recorded repeats all returned `4,396 km/162`), so these runs
-  // guard against order and cache effects in the harness rather than against a non-deterministic
-  // engine: an earlier version of this comment claimed the runtime answered differently each time,
-  // which the measurements then retracted.
+  // *identical* request and each one's own result is awaited before it is read. An earlier version of
+  // this comment claimed the runtime answers identical requests with different routes; that claim was
+  // retracted after the repeats came back identical, and the honest statement is the narrower one
+  // this run measures: *within one session* identical requests returned the same answer every time
+  // (`["4,396 km/162"]`), so these runs guard against order and cache effects rather than against a
+  // non-deterministic engine. It is an observation, not a law — the restricted run's numbers have
+  // differed between sessions, which is why the comparison above is reported rather than asserted.
   const outcomes: string[] = [];
   for (let index = 1; index <= 3; index += 1) {
     await route(page, `sudirman-repeat-${index}`, false);
