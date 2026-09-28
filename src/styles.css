@@ -28,6 +28,37 @@ html, body, #root { height: 100%; margin: 0; background: var(--color-nb-cream); 
     padding: 0.5rem 0.75rem;
     font-weight: 700;
   }
+  .nb-button {
+    min-height: 2.5rem;
+    cursor: pointer;
+  }
   .nb-button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--color-nb-black); }
+  .nb-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+    box-shadow: none;
+    transform: none;
+  }
+  .nb-input {
+    border: 3px solid var(--color-nb-black);
+    background: #ffffff;
+    padding: 0.25rem 0.5rem;
+    font: inherit;
+  }
+  .nb-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.5rem;
+    height: 1.5rem;
+    border: 3px solid var(--color-nb-black);
+    background: var(--color-nb-yellow);
+    font-weight: 700;
+    font-size: 0.75rem;
+  }
+  .nb-seg[aria-pressed='true'] {
+    background: var(--color-nb-black);
+    color: var(--color-nb-cream);
+  }
   .nb-title { font-family: var(--font-display); letter-spacing: 0.02em; text-transform: uppercase; }
 }

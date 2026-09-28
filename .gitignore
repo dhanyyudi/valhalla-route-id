@@ -9,6 +9,12 @@ public/wasm/
 .wrangler/
 .dev.vars
 
+# Playwright: the acceptance spec is tracked, its reports and traces are not. The spec's own
+# output directory lives under the gitignored .superpowers/ tree, so these cover the defaults.
+test-results/
+playwright-report/
+blob-report/
+
 # Vendored package doc copies (build-package.js copies these from the repo root into
 # packages/*/; they are generated build output, never edits). These rules do not
 # affect the tracked packages/valhalla-server/README.md, which is upstream's own.

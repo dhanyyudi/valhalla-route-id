@@ -1,9 +1,15 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+// The shell renders without a browser: MapLibre's map, its marker and the module-scope
+// `setWorkerUrl` call all have to exist for the component tree to import and render.
 vi.mock('maplibre-gl', () => ({
   Map: class { on() {} remove() {} },
+  Marker: class { setLngLat() { return this; } addTo() { return this; } remove() {} },
+  setWorkerUrl: () => {},
 }));
+
+vi.mock('maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url', () => ({ default: '/maplibre-gl-worker.js' }));
 
 import App from './App';
 
