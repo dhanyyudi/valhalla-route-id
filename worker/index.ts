@@ -226,63 +226,75 @@ export default {
   async fetch(request: Request, env: Cloudflare.Env): Promise<Response> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith(PREFIX)) return env.ASSETS.fetch(request);
-    if (request.method === 'OPTIONS') return preflight(request);
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return problem('Method not allowed.', 405, { Allow: 'GET, HEAD, OPTIONS' });
+    try {
+      return await serveDataset(request, env, url);
+    } catch (error) {
+      // A thrown R2 call (a transient storage error) used to escape as Cloudflare's opaque 500 with
+      // no CORS grant, which the browser loader reports as a network failure it cannot retry on.
+      console.error('dataset read failed', error);
+      return problem('Graph storage is temporarily unavailable.', 503, { 'Retry-After': '1' });
     }
-
-    const key = objectKey(url.pathname);
-    if (key === null) return problem('Invalid object key.', 404);
-
-    const requested = parseRange(request.headers.get('Range'));
-
-    // HEAD is answered from object metadata alone: no body stream is ever opened and
-    // no byte of the archive is read.
-    if (request.method === 'HEAD') {
-      const object = await env.GRAPH.head(key);
-      if (object === null) return problem('Expected graph object is missing.', 404);
-      const served = resolveAgainst(requested, object.size);
-      if (served === null) return unsatisfiable(object.size);
-      const headers = representation(object, key);
-      headers.set('Content-Length', String(served.length));
-      if (requested.kind === 'none') return new Response(null, { status: 200, headers });
-      headers.set('Content-Range', `bytes ${served.offset}-${served.offset + served.length - 1}/${object.size}`);
-      return new Response(null, { status: 206, headers });
-    }
-
-    // A range this Worker cannot parse is resolved against metadata only, so a 416
-    // never pulls the archive through the Worker to discover its size.
-    if (requested.kind === 'invalid') {
-      const object = await env.GRAPH.head(key);
-      if (object === null) return problem('Expected graph object is missing.', 404);
-      return unsatisfiable(object.size);
-    }
-
-    // A span that starts at or past EOF must be answered here, not by R2: the deployed
-    // binding throws for a range it cannot satisfy, and that throw is what reached the
-    // client as a 500 with no CORS grant. Only the two shapes whose satisfiability depends
-    // on the object's size pay for the lookup — a `none` request has no span to check, and
-    // a suffix range is one R2 resolves (and clamps) itself — so a whole-object read still
-    // costs a single R2 operation.
-    if (requested.kind === 'bounded' || requested.kind === 'open') {
-      const metadata = await env.GRAPH.head(key);
-      if (metadata === null) return problem('Expected graph object is missing.', 404);
-      if (resolveAgainst(requested, metadata.size) === null) return unsatisfiable(metadata.size);
-    }
-
-    const object = await env.GRAPH.get(key, requested.kind === 'none' ? undefined : { range: rangeHeader(requested) });
-    if (object === null) return problem('Expected graph object is missing.', 404);
-
-    const served = servedRange(object, requested);
-    if (served === null) {
-      await object.body.cancel().catch(() => {});
-      return unsatisfiable(object.size);
-    }
-
-    const headers = representation(object, key);
-    headers.set('Content-Length', String(served.length));
-    if (requested.kind === 'none') return new Response(object.body, { status: 200, headers });
-    headers.set('Content-Range', `bytes ${served.offset}-${served.offset + served.length - 1}/${object.size}`);
-    return new Response(object.body, { status: 206, headers });
   },
 };
+
+/** Everything under the dataset prefix: preflight, HEAD and GET with byte ranges, answered from R2. */
+async function serveDataset(request: Request, env: Cloudflare.Env, url: URL): Promise<Response> {
+  if (request.method === 'OPTIONS') return preflight(request);
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return problem('Method not allowed.', 405, { Allow: 'GET, HEAD, OPTIONS' });
+  }
+
+  const key = objectKey(url.pathname);
+  if (key === null) return problem('Invalid object key.', 404);
+
+  const requested = parseRange(request.headers.get('Range'));
+
+  // HEAD is answered from object metadata alone: no body stream is ever opened and
+  // no byte of the archive is read.
+  if (request.method === 'HEAD') {
+    const object = await env.GRAPH.head(key);
+    if (object === null) return problem('Expected graph object is missing.', 404);
+    const served = resolveAgainst(requested, object.size);
+    if (served === null) return unsatisfiable(object.size);
+    const headers = representation(object, key);
+    headers.set('Content-Length', String(served.length));
+    if (requested.kind === 'none') return new Response(null, { status: 200, headers });
+    headers.set('Content-Range', `bytes ${served.offset}-${served.offset + served.length - 1}/${object.size}`);
+    return new Response(null, { status: 206, headers });
+  }
+
+  // A range this Worker cannot parse is resolved against metadata only, so a 416
+  // never pulls the archive through the Worker to discover its size.
+  if (requested.kind === 'invalid') {
+    const object = await env.GRAPH.head(key);
+    if (object === null) return problem('Expected graph object is missing.', 404);
+    return unsatisfiable(object.size);
+  }
+
+  // A span that starts at or past EOF must be answered here, not by R2: the deployed
+  // binding throws for a range it cannot satisfy, and that throw is what reached the
+  // client as a 500 with no CORS grant. Only the two shapes whose satisfiability depends
+  // on the object's size pay for the lookup — a `none` request has no span to check, and
+  // a suffix range is one R2 resolves (and clamps) itself — so a whole-object read still
+  // costs a single R2 operation.
+  if (requested.kind === 'bounded' || requested.kind === 'open') {
+    const metadata = await env.GRAPH.head(key);
+    if (metadata === null) return problem('Expected graph object is missing.', 404);
+    if (resolveAgainst(requested, metadata.size) === null) return unsatisfiable(metadata.size);
+  }
+
+  const object = await env.GRAPH.get(key, requested.kind === 'none' ? undefined : { range: rangeHeader(requested) });
+  if (object === null) return problem('Expected graph object is missing.', 404);
+
+  const served = servedRange(object, requested);
+  if (served === null) {
+    await object.body.cancel().catch(() => {});
+    return unsatisfiable(object.size);
+  }
+
+  const headers = representation(object, key);
+  headers.set('Content-Length', String(served.length));
+  if (requested.kind === 'none') return new Response(object.body, { status: 200, headers });
+  headers.set('Content-Range', `bytes ${served.offset}-${served.offset + served.length - 1}/${object.size}`);
+  return new Response(object.body, { status: 206, headers });
+}

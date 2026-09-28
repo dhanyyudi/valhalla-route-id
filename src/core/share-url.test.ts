@@ -29,6 +29,11 @@ describe('share URL', () => {
     });
   });
 
+  it('drops a departure for a day that does not exist', () => {
+    expect(decodeScenario('time=depart&at=2026-02-30T07:00')).toEqual({});
+    expect(decodeScenario('time=depart&at=2026-02-28T07:00')).toEqual({ timeMode: 'depart', departure: '2026-02-28T07:00' });
+  });
+
   it('caps the stop count at the store limit', () => {
     const wp = Array.from({ length: 30 }, (_, index) => `-6.${index},106.8`).join(';');
     expect(decodeScenario(`wp=${wp}`).waypoints).toHaveLength(25);

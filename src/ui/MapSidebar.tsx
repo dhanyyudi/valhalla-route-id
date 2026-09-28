@@ -17,7 +17,7 @@ const LEG_LABEL_CHOICES: Array<{ value: LegLabelMode; label: string }> = [
  */
 export function MapSidebar({ onZoomToGage }: { onZoomToGage: () => void }) {
   return (
-    <aside className="pointer-events-none absolute bottom-20 right-4 top-4 z-20 flex w-[23rem] max-w-[calc(100vw-1rem)] flex-col gap-2">
+    <aside data-testid="map-sidebar" className="pointer-events-none absolute bottom-20 right-4 top-4 z-20 flex w-[23rem] max-w-[calc(100vw-1rem)] flex-col gap-2">
       <ViewControls />
       <GageLegend onZoomToGage={onZoomToGage} />
       <ProcessLog className="pointer-events-auto min-h-0 flex-1" />

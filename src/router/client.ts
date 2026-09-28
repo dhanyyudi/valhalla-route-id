@@ -1,4 +1,4 @@
-import { RoutingError, createRouter, type Diagnostics, type ProgressEvent as SdkProgress, type RouteRequest, type RouteResult, type Router, type StartupResult, type WasmMemoryOptions } from 'valhalla-browser';
+import { Router, RoutingError, type Diagnostics, type ProgressEvent as SdkProgress, type RouteRequest, type RouteResult, type StartupResult, type WasmMemoryOptions } from 'valhalla-browser';
 // The SDK ships a matching module worker and WASM binary next to its own entry point. Asking Vite
 // for their URLs makes the application build emit both files, so the deployed SPA loads a worker
 // from its own origin instead of resolving `new URL(..., import.meta.url)` inside a dependency.
@@ -136,10 +136,15 @@ export interface RouteClient {
  * the price of a Cancel button that actually stops a 48 MB tile read.
  */
 export function createRouteClient(manifestUrl: string, { onProgress }: RouteClientOptions = {}): RouteClient {
-  let routerPromise: Promise<Router> | undefined;
+  let session: Router | undefined;
   let active: AbortController | undefined;
 
-  const router = (): Promise<Router> => (routerPromise ??= createRouter({
+  // One lazily built Router, initialised by its own `route()`. The earlier `createRouter()` awaited
+  // startup *before* the abort signal was attached, so Batal during "Memuat mesin" or "Menyiapkan
+  // graf" aborted a controller nothing listened to and the WASM and graph downloads carried on.
+  // `Router.route` attaches the signal to its startup as well, and a failed startup is retryable on
+  // the same instance, so nothing has to be rebuilt after an error.
+  const router = (): Router => (session ??= new Router({
     manifestUrl,
     transport: 'indexed-tar',
     memoryBudgetBytes: MEMORY_BUDGET_BYTES,
@@ -148,16 +153,12 @@ export function createRouteClient(manifestUrl: string, { onProgress }: RouteClie
     onProgress,
     workerUrl: sdkWorkerUrl,
     wasmUrl: sdkWasmUrl,
-  }).catch(error => {
-    // A failed startup must stay retryable: the next run starts a fresh session rather than
-    // replaying the same rejected promise.
-    routerPromise = undefined;
-    throw error;
   }));
 
   const diagnostics = async (): Promise<RouteDiagnosticsSample> => {
-    const session = await router();
-    return { startup: session.startup ?? null, diagnostics: await session.diagnostics() };
+    const current = router();
+    const counters = await current.diagnostics();
+    return { startup: current.startup ?? null, diagnostics: counters };
   };
   if (typeof window !== 'undefined') window.valhallaDiagnostics = diagnostics;
 
@@ -173,7 +174,7 @@ export function createRouteClient(manifestUrl: string, { onProgress }: RouteClie
         controller.abort(new RoutingError('TIMEOUT', 'Routing operation deadline expired.'));
       }, ROUTE_TIMEOUT_MS);
       try {
-        return await (await router()).route(request, { signal: controller.signal });
+        return await router().route(request, { signal: controller.signal });
       } catch (error) {
         // The SDK reports an aborted operation as CANCELLED whichever way it was aborted, so the
         // host deadline is the only place that can tell a timeout from a user's Cancel.
@@ -190,15 +191,13 @@ export function createRouteClient(manifestUrl: string, { onProgress }: RouteClie
     },
     async dispose() {
       active?.abort(new RoutingError('DISPOSED', 'Router is disposed.'));
-      if (!routerPromise) return;
-      const pending = routerPromise;
-      routerPromise = undefined;
-      await (await pending.catch(() => undefined))?.dispose();
+      const current = session;
+      session = undefined;
+      await current?.dispose();
     },
     diagnostics,
     async startup() {
-      if (!routerPromise) return null;
-      return (await routerPromise.catch(() => undefined))?.startup ?? null;
+      return session?.startup ?? null;
     },
   };
 }

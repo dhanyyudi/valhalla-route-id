@@ -234,9 +234,9 @@ describe('/datasets range handler', () => {
   });
 
   it('survives an R2 that throws for an unsatisfiable range instead of ignoring it', async () => {
-    // The handler has no `try`/`catch`, so this is the production failure itself: whatever
-    // escapes here is the `HTTP 500` with `error code: 1101` and no CORS grant that the
-    // deployed endpoint returned, which is why the span must not be requested at all.
+    // This is the production failure itself: the throw once escaped as `HTTP 500` with
+    // `error code: 1101` and no CORS grant. The handler now also catches storage errors (next
+    // test), but an unsatisfiable span must still be answered as 416 without asking R2 for it.
     const askedFor: string[] = [];
     const graph = productionLikeGraph(env.GRAPH, askedFor, true);
 
@@ -248,6 +248,22 @@ describe('/datasets range handler', () => {
     }
 
     expect(askedFor).toEqual([]);
+  });
+
+  it('answers a storage failure with a retryable 503 that a cross-origin browser can read', async () => {
+    const failing = new Proxy(env.GRAPH, {
+      get(target, property) {
+        if (property === 'get' || property === 'head') return async () => { throw new Error('R2 internal error'); };
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as R2Bucket;
+    for (const init of [{ method: 'GET' }, { method: 'HEAD' }, { headers: { Range: 'bytes=0-9' } }] as RequestInit[]) {
+      const response = await fetchWithGraph(failing, { ...init, headers: { ...(init.headers as Record<string, string>), Origin: 'http://localhost:5173' } });
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('1');
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    }
   });
 
   it('never answers a request that carries a Range header with 200', async () => {

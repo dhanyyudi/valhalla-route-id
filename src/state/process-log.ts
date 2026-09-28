@@ -32,8 +32,17 @@ export interface RunProgress {
   lastTile: string | null;
 }
 
+/** What the worker holds right now, as the last completed route reported it. */
+export interface SessionState {
+  /** The engine is loaded and initialised; false before the first route and after a cancel. */
+  ready: boolean;
+  decodedCacheBytes: number;
+  heapHighWaterBytes: number;
+}
+
 export interface ProcessLogState {
   entries: LogEntry[];
+  session: SessionState;
   run: RunProgress | null;
   /** Whether the log panel is open; kept here so the loader can open it. */
   open: boolean;
@@ -41,6 +50,7 @@ export interface ProcessLogState {
   beginRun(): void;
   progress(event: SdkProgress): void;
   endRun(): void;
+  setSession(session: SessionState): void;
   clear(): void;
   setOpen(open: boolean): void;
 }
@@ -60,8 +70,9 @@ let nextId = 1;
 export const useProcessLog = create<ProcessLogState>((set, get) => ({
   entries: [],
   run: null,
+  session: { ready: false, decodedCacheBytes: 0, heapHighWaterBytes: 0 },
   // In front on a desktop; on a phone the map needs the room, so the log starts behind a button.
-  open: typeof matchMedia === 'function' ? matchMedia('(min-width: 768px)').matches : true,
+  open: typeof matchMedia === 'function' ? matchMedia('(min-width: 1024px)').matches : true,
 
   push(level, text) {
     const run = get().run;
@@ -93,6 +104,9 @@ export const useProcessLog = create<ProcessLogState>((set, get) => ({
   },
   endRun() {
     set({ run: null });
+  },
+  setSession(session) {
+    set({ session });
   },
   clear() {
     set({ entries: [] });
