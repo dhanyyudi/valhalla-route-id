@@ -1,0 +1,122 @@
+name: ci
+
+# Every branch and every pull request runs `verify`. `deploy` is gated to main below, so pushing a
+# feature branch proves the pipeline without publishing.
+on:
+  push:
+  pull_request:
+
+# One run per ref: a pushed fix cancels the run it supersedes instead of queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # The WASM runtime exists only as the output of the pinned Docker build (`pnpm run build:wasm`,
+      # scripts/Dockerfile), and GitHub-hosted runners have no Docker. It is published as the
+      # `wasm-runtime-v1` release instead. `pnpm run build:sdk` re-checks the download against
+      # native/runtime-lock.json and fails on any mismatch, so a stale asset cannot ship.
+      - name: Fetch the pinned WASM runtime
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p public/wasm
+          gh release download wasm-runtime-v1 --pattern valhalla.wasm --dir public/wasm
+          gh release download wasm-runtime-v1 --pattern valhalla.js --dir public/wasm
+
+      # Two more inputs that only the Docker build can produce, fetched for the same reason:
+      #   * scripts/collect-licenses.py assembles the dependency license texts under
+      #     public/wasm/licenses/, and `pnpm run build:sdk` refuses to package the SDK without them;
+      #   * the Liechtenstein graph that tools/smoke/*.test.ts route against is built by
+      #     `pnpm run data:region` (Docker again) and is deliberately not committed.
+      - name: Fetch the CI fixtures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p public/datasets
+          gh release download ci-fixtures-v1 --pattern runtime-licenses.tar.gz --dir "$RUNNER_TEMP"
+          gh release download ci-fixtures-v1 --pattern 'liechtenstein-*.tar.gz' --dir "$RUNNER_TEMP"
+          tar xzf "$RUNNER_TEMP/runtime-licenses.tar.gz" -C public/wasm
+          tar xzf "$RUNNER_TEMP"/liechtenstein-*.tar.gz -C public/datasets
+
+      - run: pnpm run build:sdk
+      - run: pnpm typecheck:all
+
+      # The smoke tests bind a local port. Pin it rather than inheriting the 8790 default, and pin it
+      # away from the ports the other suites use, so a busy runner cannot fail the run.
+      - name: Test
+        env:
+          VALHALLA_TEST_PORT: '8795'
+        run: pnpm test
+
+      # Built before the Worker tests, not after: worker/index.test.ts asserts that a non-dataset
+      # path falls through to the static assets binding and returns the SPA shell, which only exists
+      # once dist/ has been produced.
+      - run: pnpm build
+
+      - run: pnpm test:worker
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Same Docker-less runtime and fixture fetch as `verify`: `wrangler deploy` uploads dist/, which
+      # the SPA build produces, and packaging the SDK needs the runtime plus its license texts.
+      - name: Fetch the pinned WASM runtime
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p public/wasm
+          gh release download wasm-runtime-v1 --pattern valhalla.wasm --dir public/wasm
+          gh release download wasm-runtime-v1 --pattern valhalla.js --dir public/wasm
+
+      - name: Fetch the CI fixtures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p public/datasets
+          gh release download ci-fixtures-v1 --pattern runtime-licenses.tar.gz --dir "$RUNNER_TEMP"
+          gh release download ci-fixtures-v1 --pattern 'liechtenstein-*.tar.gz' --dir "$RUNNER_TEMP"
+          tar xzf "$RUNNER_TEMP/runtime-licenses.tar.gz" -C public/wasm
+          tar xzf "$RUNNER_TEMP"/liechtenstein-*.tar.gz -C public/datasets
+
+      - run: pnpm run build:sdk
+      - run: pnpm build
+
+      # Requires the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      # Acceptance against what was just published, not against the build output. The spec reads
+      # E2E_BASE_URL; PROD_URL is the repository variable that holds the Worker's origin.
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Acceptance route against production
+        env:
+          E2E_BASE_URL: ${{ vars.PROD_URL }}
+        run: pnpm test:e2e
