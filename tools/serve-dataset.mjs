@@ -6,6 +6,18 @@ import { pathToFileURL } from 'node:url';
 const TYPES = { '.json': 'application/json', '.tar': 'application/octet-stream', '.gph': 'application/octet-stream' };
 const relative = url => url.replace(/^\.\//, '');
 
+/**
+ * The same CORS grant the deployed Worker carries (worker/index.ts). Without it the documented
+ * local-development flow — SPA on `localhost:5173`, manifest here on port 8788 — never gets past
+ * the browser's CORS check, whatever the dataset is. The graph is public, read-only data, so the
+ * wildcard grants nothing a plain `curl` could not already read.
+ */
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Expose-Headers': 'Content-Range, Content-Length, ETag, Last-Modified',
+};
+const PREFLIGHT_HEADERS = 'Range, If-None-Match, If-Modified-Since';
+
 const readManifest = releaseDir => JSON.parse(readFileSync(join(releaseDir, 'manifest.json'), 'utf8'));
 
 /**
@@ -30,7 +42,7 @@ function manifestEtags(manifest) {
  * fetch `${url}/manifest.json` and the loader accepts the release identity it validated.
  *
  * @param {{ root: string, port?: number }} [options] release directory to serve
- * @returns {Promise<{ url: string, close: () => Promise<void> }>}
+ * @returns {Promise<{ url: string, close: () => Promise<void> }>} rejects when the port cannot be bound
  */
 export function serveDataset(options = {}) {
   const { root, port = 8788 } = options;
@@ -40,7 +52,16 @@ export function serveDataset(options = {}) {
   const mount = `/${manifest.release}`;
 
   const server = createServer((request, response) => {
-    const fail = (status, message) => { response.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' }).end(message); };
+    const fail = (status, message) => { response.writeHead(status, { ...CORS, 'Content-Type': 'text/plain; charset=utf-8' }).end(message); };
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204, {
+        ...CORS,
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': request.headers['access-control-request-headers'] ?? PREFLIGHT_HEADERS,
+        'Access-Control-Max-Age': '86400',
+      }).end();
+      return;
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') return fail(405, 'method not allowed');
     let pathname;
     try { pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname); }
@@ -56,6 +77,7 @@ export function serveDataset(options = {}) {
     if (!stats.isFile()) return fail(404, 'not found');
     const size = stats.size;
     const headers = {
+      ...CORS,
       'Content-Type': TYPES[extname(path)] ?? 'application/octet-stream',
       'Accept-Ranges': 'bytes',
       'ETag': etags.get(name) ?? `"${size.toString(16)}"`,
@@ -66,7 +88,7 @@ export function serveDataset(options = {}) {
     if (range) {
       const start = Number(range[1]);
       const end = range[2] === '' ? size - 1 : Math.min(Number(range[2]), size - 1);
-      if (start >= size || start > end) { response.writeHead(416, { 'Content-Range': `bytes */${size}` }).end(); return; }
+      if (start >= size || start > end) { response.writeHead(416, { ...CORS, 'Content-Range': `bytes */${size}` }).end(); return; }
       response.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
       if (request.method === 'HEAD') { response.end(); return; }
       const stream = createReadStream(path, { start, end });
@@ -81,14 +103,21 @@ export function serveDataset(options = {}) {
     response.on('close', () => stream.destroy());
     stream.pipe(response);
   });
-  return new Promise(ready => server.listen(port, () => ready({
-    url: `http://localhost:${port}${mount}`,
-    close: () => new Promise(done => {
-      // The SDK's fetch keeps sockets alive; without this the close callback never fires.
-      server.close(done);
-      server.closeIdleConnections();
-    }),
-  })));
+  return new Promise((ready, reject) => {
+    // Without this the promise never settles on a bind failure (`EADDRINUSE`), and both smoke
+    // suites' `beforeAll` wait on it until the test runner times out with no explanation. A
+    // `reject` after `ready` has already run is a no-op, so this also keeps a later socket error
+    // from becoming an uncaught exception.
+    server.on('error', reject);
+    server.listen(port, () => ready({
+      url: `http://localhost:${port}${mount}`,
+      close: () => new Promise(done => {
+        // The SDK's fetch keeps sockets alive; without this the close callback never fires.
+        server.close(done);
+        server.closeIdleConnections();
+      }),
+    }));
+  });
 }
 
 /** Resolve a release directory: `root` itself, or the single release directory beneath it. */
@@ -104,5 +133,11 @@ function releaseDirectory(root) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = releaseDirectory(process.argv[2] ?? join('public', 'datasets'));
   const port = Number(process.argv[3] ?? 8788);
-  serveDataset({ root, port }).then(({ url }) => console.log(`serving ${root} on ${url} — manifest ${url}/manifest.json`));
+  serveDataset({ root, port })
+    .then(({ url }) => console.log(`serving ${root} on ${url} — manifest ${url}/manifest.json`))
+    .catch(error => {
+      // A busy port must read as a busy port, not as a server that started and answered nothing.
+      console.error(`serve-dataset: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    });
 }

@@ -74,6 +74,49 @@ describe('/datasets range handler', () => {
     expect(await manifest.json()).toMatchObject({ release: RELEASE, archive: { etag } });
   });
 
+  it('lets a cross-origin browser read a 200 and a 206, exposing the range validators', async () => {
+    // The documented local-development flow runs the SPA on localhost against this origin, so a
+    // response without `Access-Control-Allow-Origin` is a hard failure for a first-time
+    // contributor: the SDK's `fetch` rejects before it can validate anything.
+    const crossOrigin = { Origin: 'http://localhost:5173' };
+
+    const whole = await SELF.fetch(origin(MANIFEST), { headers: crossOrigin });
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(whole.headers.get('Access-Control-Expose-Headers')).toBe('Content-Range, Content-Length, ETag, Last-Modified');
+
+    const ranged = await SELF.fetch(origin(GRAPH), { headers: { ...crossOrigin, Range: 'bytes=512-1023' } });
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(ranged.headers.get('Access-Control-Expose-Headers')).toBe('Content-Range, Content-Length, ETag, Last-Modified');
+    // The exposed headers are the ones the store actually validates a ranged read against.
+    expect(ranged.headers.get('Content-Range')).toBe('bytes 512-1023/2048');
+    expect(ranged.headers.get('ETag')).toBe(etag);
+
+    // A 416 is readable too, so a client can retry instead of seeing an opaque network error.
+    const unsatisfiable = await SELF.fetch(origin(GRAPH), { headers: { ...crossOrigin, Range: 'bytes=99999-' } });
+    expect(unsatisfiable.status).toBe(416);
+    expect(unsatisfiable.headers.get('Access-Control-Allow-Origin')).toBe('*');
+  });
+
+  it('answers a CORS preflight for a dataset object without touching the bucket', async () => {
+    const preflight = await SELF.fetch(origin(GRAPH), {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://localhost:5173', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'range' },
+    });
+
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(preflight.headers.get('Access-Control-Allow-Methods')).toBe('GET, HEAD, OPTIONS');
+    expect(preflight.headers.get('Access-Control-Allow-Headers')).toBe('range');
+    expect((await preflight.arrayBuffer()).byteLength).toBe(0);
+
+    // With no requested headers named, the documented set is advertised.
+    const bare = await SELF.fetch(origin(GRAPH), { method: 'OPTIONS', headers: { Origin: 'http://localhost:5173' } });
+    expect(bare.status).toBe(204);
+    expect(bare.headers.get('Access-Control-Allow-Headers')).toBe('Range, If-None-Match, If-Modified-Since');
+  });
+
   it('answers HEAD with the size, the same ETag and a parseable Last-Modified, and no body', async () => {
     const head = await SELF.fetch(origin(GRAPH), { method: 'HEAD' });
 

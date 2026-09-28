@@ -1,5 +1,8 @@
-// Serves the dataset's graph bytes out of R2 and the SPA out of the assets binding,
-// so the app and its data share one origin and need no CORS.
+// Serves the dataset's graph bytes out of R2 and the SPA out of the assets binding, so the
+// deployed app and its data share one origin. The graph is public, read-only and
+// credential-less, so `/datasets/*` also carries a wildcard CORS grant: without it the
+// documented local-development flow (the SPA on `localhost:5173`, the manifest on this
+// origin) is blocked by the browser before the SDK ever sees a byte.
 //
 // The HTTP store in packages/valhalla-core/src/store.ts is strict: a ranged read is
 // rejected unless the response is 206 with `Content-Range: bytes <a>-<b>/<total>`,
@@ -16,6 +19,17 @@
 
 const PREFIX = '/datasets/';
 const IMMUTABLE = 'public, max-age=31536000, immutable';
+
+// Every `/datasets/*` response carries these, including the error responses: a browser in
+// CORS mode cannot read a status or a body that arrives without `Access-Control-Allow-Origin`,
+// so a 404 or a 416 would otherwise surface as an opaque network failure. The exposed headers
+// are exactly the ones the SDK's store reads to validate a range (`Content-Range`,
+// `Content-Length`, `ETag`) plus the `Last-Modified` its `head()` parses.
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Expose-Headers': 'Content-Range, Content-Length, ETag, Last-Modified',
+};
+const PREFLIGHT_HEADERS = 'Range, If-None-Match, If-Modified-Since';
 
 /** What the client asked for, parsed without yet knowing the object's size. */
 type RequestedRange =
@@ -147,13 +161,31 @@ function representation(object: R2Object, key: string): Headers {
     'Last-Modified': object.uploaded.toUTCString(),
     'Cache-Control': IMMUTABLE,
     'Accept-Ranges': 'bytes',
+    ...CORS,
   });
 }
 
 function problem(message: string, status: number, extra?: Record<string, string>): Response {
   return new Response(`${message}\n`, {
     status,
-    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...extra },
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...CORS, ...extra },
+  });
+}
+
+/**
+ * A preflight is answered from constants alone — no R2 lookup, no range parse. The requested
+ * headers are echoed when the browser names them, so a future store that adds a request header
+ * does not need a Worker change; the fallback covers a preflight that names none.
+ */
+function preflight(request: Request): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      ...CORS,
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': request.headers.get('Access-Control-Request-Headers') ?? PREFLIGHT_HEADERS,
+      'Access-Control-Max-Age': '86400',
+    },
   });
 }
 
@@ -185,6 +217,7 @@ export default {
   async fetch(request: Request, env: Cloudflare.Env): Promise<Response> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith(PREFIX)) return env.ASSETS.fetch(request);
+    if (request.method === 'OPTIONS') return preflight(request);
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return problem('Method not allowed.', 405, { Allow: 'GET, HEAD' });
     }
