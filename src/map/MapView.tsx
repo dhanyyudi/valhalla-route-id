@@ -25,6 +25,12 @@ export interface MapViewProps {
   /** Initial zoom; later changes are ignored, as with `center`. */
   zoom?: number;
   onMapClick?: (lngLat: { lng: number; lat: number }) => void;
+  /**
+   * Called once with the map, after the basemap style has loaded.
+   *
+   * A layer can only be added to a loaded style, so this — not "the map exists" — is the signal for
+   * every overlay the app draws, including the ganjil-genap corridors.
+   */
   onReady?: (map: MapLibreMap) => void;
 }
 

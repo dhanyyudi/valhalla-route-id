@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import { MapView } from './map/MapView';
+import { drawGageLayer } from './map/gage-layer';
 import { clearRoutes, clearWaypoints, drawRoute, drawWaypoints } from './map/route-layer';
 import { useScenario } from './state/scenario';
 import { RoutePanel } from './ui/RoutePanel';
@@ -12,6 +13,7 @@ export default function App() {
   const [geometryPoints, setGeometryPoints] = useState<number | null>(null);
   const waypoints = useScenario(state => state.waypoints);
   const result = useScenario(state => state.result);
+  const gage = useScenario(state => state.gage);
 
   const addWaypoint = useCallback((point: { lng: number; lat: number }) => {
     useScenario.getState().addWaypoint(point);
@@ -23,6 +25,18 @@ export default function App() {
     drawWaypoints(map, waypoints);
     return () => clearWaypoints(map);
   }, [map, waypoints]);
+
+  // Corridors are drawn under the route and recoloured by the constraint: terracotta once a route
+  // was requested with them excluded, grey while the constraint is off or simply not in force.
+  useEffect(() => {
+    if (!map) return;
+    const container = map.getContainer();
+    const rings = drawGageLayer(map, Boolean(gage && gage.excludePolygons.length > 0));
+    // How many corridor rings the layer holds: the browser acceptance test cannot read a canvas, and
+    // a zero here after `map-ready` is the signal that the style was not loaded when this ran.
+    container.dataset.gageRings = String(rings);
+    container.dataset.gageActive = String(Boolean(gage && gage.excludePolygons.length > 0));
+  }, [map, gage]);
 
   useEffect(() => {
     if (!map) return;

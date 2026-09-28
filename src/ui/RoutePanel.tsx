@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { describeCrossings } from '../core/gage-crossing';
 import { parsePointInput } from '../core/point-input';
 import type { TimeMode } from '../core/request-builder';
+import type { PlateParity } from '../core/ganjil-genap';
 import { PROFILE_LABELS, PROFILE_OPTIONS, SLOW_PROFILES, useScenario, withPresetHour, type OptionControl } from '../state/scenario';
 import { formatDuration, formatKilometers } from './StatusBar';
 
@@ -83,6 +85,7 @@ export function RoutePanel() {
           <Waypoints />
           <Profiles />
           <TimeControl timeMode={timeMode} departure={departure} />
+          <GanjilGenap />
           <Options key={profile} profile={profile} />
 
           {status === 'routing' ? (
@@ -307,6 +310,92 @@ function TimeControl({ timeMode, departure }: { timeMode: TimeMode; departure: s
           </button>
         ))}
       </div>
+    </section>
+  );
+}
+
+/** The three states the parity control offers, in the panel's own Indonesian. */
+const PARITY_CHOICES: Array<{ value: PlateParity; label: string }> = [
+  { value: 'odd', label: 'Ganjil' },
+  { value: 'even', label: 'Genap' },
+  { value: 'off', label: 'Nonaktif' },
+];
+
+/** Indonesian label and colour for each verdict the rule can return. */
+const STATUS_TEXT: Record<string, string> = {
+  exempt_profile: 'Dikecualikan',
+  inactive_time: 'Tidak berlaku',
+  allowed: 'Boleh melintas',
+  restricted: 'Kena ganjil-genap',
+};
+
+/**
+ * The ganjil-genap block: plate parity, the rule's verdict for the simulated time, what the request
+ * is doing about it, and — after a route — which corridors the returned geometry still crosses.
+ *
+ * The verdict is derived from the scenario on every render (`gagePlan` is a bounding-box test over
+ * 30 rings), so the status never contradicts the time control or the profile next to it.
+ */
+function GanjilGenap() {
+  const plateParity = useScenario(state => state.plateParity);
+  const profile = useScenario(state => state.profile);
+  const timeMode = useScenario(state => state.timeMode);
+  const departure = useScenario(state => state.departure);
+  const result = useScenario(state => state.result);
+  const gage = useScenario(state => state.gage);
+  const crossings = useScenario(state => state.crossings);
+
+  // Re-derived from the current controls rather than remembered, so changing the hour or the plate
+  // updates the verdict immediately. `result` and `waypoints` are read through the store inside
+  // `gagePlan()`, which is why the geometry is not a dependency of its own.
+  const plan = useMemo(
+    () => useScenario.getState().gagePlan(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plateParity, profile, timeMode, departure, result],
+  );
+
+  const sent = gage?.excludePolygons.length ?? 0;
+  return (
+    <section className="mt-3 border-t-3 border-nb-black pt-2" data-testid="gage-block">
+      <h2 className="nb-title text-sm">Ganjil-genap</h2>
+      <div className="mt-1 grid grid-cols-3 gap-1">
+        {PARITY_CHOICES.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            data-testid={`parity-${value}`}
+            aria-pressed={plateParity === value}
+            className="nb-button nb-seg px-1 py-1 text-xs"
+            onClick={() => useScenario.getState().setPlateParity(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <p data-testid="gage-status" className="mt-2 text-xs font-bold">
+        Status: {STATUS_TEXT[plan.evaluation.status] ?? plan.evaluation.status}
+        {plan.evaluation.window ? ` · ${plan.evaluation.window.label} ${plan.evaluation.window.startHour}:00–${plan.evaluation.window.endHour}:00 WIB` : ''}
+        {' · '}
+        {plan.evaluation.parts.isoDate} {String(plan.evaluation.parts.hour).padStart(2, '0')}:{String(plan.evaluation.parts.minute).padStart(2, '0')} WIB
+      </p>
+      <p data-testid="gage-reason" className="mt-1 text-xs opacity-80">{plan.evaluation.reason}</p>
+
+      {plan.restricted ? (
+        <p data-testid="gage-request" className="mt-1 text-xs">
+          Permintaan membawa exclude_polygons: {plan.excludePolygons.length} ring ({(plan.perimeterMeters / 1000).toFixed(1)} km dari batas 10 km per permintaan).
+          {plan.excluded.length > 0 ? ` Ruas utuh: ${plan.excluded.map(corridor => corridor.name).join(', ')}.` : ''}
+          {plan.partial.length > 0 ? ` Sebagian: ${plan.partial.map(corridor => corridor.name).join(', ')}.` : ''}
+        </p>
+      ) : (
+        <p data-testid="gage-request" className="mt-1 text-xs opacity-80">Permintaan tidak membawa exclude_polygons.</p>
+      )}
+
+      {result && crossings ? (
+        <p data-testid="gage-crossing" className="mt-1 text-xs font-bold">
+          {describeCrossings(crossings, sent)}
+        </p>
+      ) : null}
     </section>
   );
 }

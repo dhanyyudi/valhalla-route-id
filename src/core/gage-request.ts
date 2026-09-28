@@ -1,0 +1,143 @@
+/**
+ * The seam between a scenario and the ganjil-genap constraint.
+ *
+ * One function decides everything the UI and the request need: the rule's verdict for the scenario's
+ * simulated time, which corridors to exclude (only when the verdict is `restricted`), the rings to
+ * send, and the corridors the budget could not cover. Keeping it in one pure place is what makes
+ * "Nonaktif changes nothing" checkable — with the constraint off, the exclusion list is empty and
+ * the request builder produces exactly the request it produced before this feature existed.
+ */
+import { findCorridorCrossings } from './gage-crossing';
+import {
+  REQUEST_PERIMETER_BUDGET_METERS,
+  encodeExcludePolygons,
+  selectCorridorsForRoute,
+  type CorridorPolygons,
+  type LngLat,
+} from './gage-geometry';
+import { evaluateGanjilGenap, type GanjilGenapEvaluation, type PlateParity } from './ganjil-genap';
+import type { Profile, TimeMode } from './request-builder';
+
+/** Inputs the planner needs from a scenario. */
+export interface GageRequestInput {
+  /** Plate parity the user declared; `off` means "no constraint for this scenario". */
+  plateParity: PlateParity;
+  /** Active profile; motorcycles and scooters are exempt by regulation. */
+  profile: Profile;
+  /** How the time control is set: now, a departure time, or an arrival time. */
+  timeMode: TimeMode;
+  /** `datetime-local` value from the panel; interpreted as WIB wall-clock, not the host's zone. */
+  departure: string;
+  /** Route geometry (`[lng, lat]`) when a route has been calculated; otherwise the planned stops. */
+  geometry: LngLat[];
+  /** The generated corridors; defaults to the bundled artifact. */
+  corridors: CorridorPolygons[];
+  /** Buffer half-width in metres; defaults to the artifact's declared 35 m. */
+  bufferMeters: number;
+  /** Wall clock, injected so tests and the state store can pin it. */
+  now: Date;
+  /** Per-request ring-perimeter budget; defaults to the packer's own budget. */
+  budgetMeters?: number;
+}
+
+/** Everything the panel and the request builder need to know about the constraint. */
+export interface GagePlan {
+  /** The rule's verdict: status, Indonesian reason and the window in force. */
+  evaluation: GanjilGenapEvaluation;
+  /** Corridors inside the route's reach that the request asks Valhalla to avoid. */
+  excluded: CorridorPolygons[];
+  /** Corridors only partly covered: the budget paid for some of their rings, not all. */
+  partial: CorridorPolygons[];
+  /** How many rings the request carries. */
+  ringsSent: number;
+  /**
+   * Rows for `request.exclude_polygons` — empty whenever the constraint does not apply.
+   *
+   * Valhalla's parser reads each row as a ring of `[longitude, latitude]` pairs (see
+   * `tools/build-gage-polygons.ts` for the source evidence).
+   */
+  excludePolygons: number[][][];
+  /** Summed perimeter of `excludePolygons`, in metres, against Valhalla's 10,000 m service limit. */
+  perimeterMeters: number;
+  /** True only when the constraint is active, the profile is not exempt, and parity differs. */
+  restricted: boolean;
+}
+
+/**
+ * Turn a `datetime-local` string into the instant it names in WIB.
+ *
+ * The panel's value is the dataset's local wall clock, and WIB is UTC+7 with no daylight saving, so
+ * `2026-09-28T07:00` is 2026-09-28T00:00:00Z. Parsing it as UTC instead (which is what `Date`'s
+ * ISO fallback does for a value without a zone suffix) would evaluate the rule seven hours early —
+ * 07:00 would be judged at midnight WIB, outside every window.
+ *
+ * @param value - `YYYY-MM-DDTHH:MM` from the panel, optionally with seconds.
+ * @param fallback - Used when the value cannot be parsed, so a malformed input never routes blind.
+ * @returns The instant the wall clock names in WIB.
+ */
+export function wibInstant(value: string, fallback: Date): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(value.trim());
+  if (!match) return fallback;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(part => Number(part ?? 0));
+  const instant = new Date(Date.UTC(year, month - 1, day, hour - 7, minute, second));
+  return Number.isNaN(instant.getTime()) ? fallback : instant;
+}
+
+/**
+ * The instant the constraint is evaluated at, matching the time the route is requested for.
+ * @param input - Scenario time control, the panel's value and the wall clock.
+ * @returns `now` for a "route now" scenario; the departure time for `depart`; the arrival time for
+ *   `arrive_by`, exactly as the design requires.
+ */
+export function evaluationInstant(input: Pick<GageRequestInput, 'timeMode' | 'departure' | 'now'>): Date {
+  if (input.timeMode === 'now') return input.now;
+  return wibInstant(input.departure, input.now);
+}
+
+/**
+ * Plan the constraint for one scenario.
+ *
+ * @param input - Parity, profile, time control, geometry to test and the corridor data.
+ * @returns The verdict, the corridors to exclude, the native rows to send and the budget report.
+ * @remarks `excludePolygons` is non-empty only for a `restricted` verdict. An exempt profile, a
+ *   time outside the windows, a matching parity and "Nonaktif" all return an empty list, which is
+ *   what keeps an existing scenario's request byte-identical to the pre-feature build.
+ */
+export function planGageRequest(input: GageRequestInput): GagePlan {
+  const evaluation = evaluateGanjilGenap({
+    at: evaluationInstant(input),
+    profile: input.profile,
+    plateParity: input.plateParity,
+    route: input.geometry,
+  });
+
+  if (evaluation.status !== 'restricted') {
+    return { evaluation, excluded: [], partial: [], ringsSent: 0, excludePolygons: [], perimeterMeters: 0, restricted: false };
+  }
+
+  const selection = selectCorridorsForRoute(
+    input.geometry,
+    input.corridors,
+    input.bufferMeters,
+    input.budgetMeters ?? REQUEST_PERIMETER_BUDGET_METERS,
+  );
+  return {
+    evaluation,
+    excluded: selection.selected,
+    partial: selection.omitted,
+    ringsSent: selection.rings.length,
+    excludePolygons: encodeExcludePolygons(selection.rings),
+    perimeterMeters: selection.perimeterMeters,
+    restricted: true,
+  };
+}
+
+/**
+ * Corridors the returned route still runs through.
+ * @param geometry - Decoded route geometry, `[lng, lat]`.
+ * @param corridors - The same corridor data the request was planned from.
+ * @returns The crossing report the panel shows after a route.
+ */
+export function crossingsForRoute(geometry: LngLat[], corridors: CorridorPolygons[]) {
+  return findCorridorCrossings(geometry, corridors);
+}

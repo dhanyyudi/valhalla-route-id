@@ -8,6 +8,10 @@
     "strict": true,
     "noEmit": true,
     "allowJs": true,
+    // The Node-run build/probe scripts under tools/ import the TypeScript core with an explicit
+    // `.ts` extension so `node --experimental-strip-types` resolves them without a bundler. Safe
+    // here because this project never emits: `noEmit` is already true.
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["vite/client", "@cloudflare/workers-types"]
   },

@@ -28,4 +28,22 @@ describe('buildRouteRequest', () => {
   it('omits date_time in now mode', () => {
     expect(buildRouteRequest({ ...base, timeMode: 'now' }).date_time).toBeUndefined();
   });
+
+  it('carries exclude_polygons, longitude first, when the constraint supplies rings', () => {
+    const ring: number[][] = [[106.82, -6.18], [106.83, -6.18], [106.83, -6.19], [106.82, -6.18]];
+    const request = buildRouteRequest({ ...base, excludePolygons: [ring, ring] });
+    expect(request.exclude_polygons).toEqual([ring, ring]);
+    // The SDK's own declaration types this as `string[]`; the engine reads coordinates, so the value
+    // must stay numeric. A regression that stringified it would silently disable the exclusion.
+    expect(Array.isArray((request.exclude_polygons as unknown as number[][][])[0][0])).toBe(true);
+  });
+
+  it('omits exclude_polygons entirely when the constraint does not apply', () => {
+    // This is the "Nonaktif changes nothing" regression: the request for a scenario without the
+    // constraint must be exactly the object this builder produced before the feature existed.
+    const withoutField = buildRouteRequest(base);
+    expect(buildRouteRequest({ ...base, excludePolygons: [] })).toEqual(withoutField);
+    expect('exclude_polygons' in withoutField).toBe(false);
+    expect(Object.keys(withoutField).sort()).toEqual(['costing', 'date_time', 'directions_options', 'locations']);
+  });
 });

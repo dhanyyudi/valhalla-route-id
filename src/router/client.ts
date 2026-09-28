@@ -88,7 +88,26 @@ declare global {
      * changes nothing about how a route is calculated.
      */
     valhallaDiagnostics?: () => Promise<RouteDiagnosticsSample>;
+    /**
+     * Read-only view of the most recent route request the session built.
+     *
+     * The same object `buildRouteRequest` returned, not a reconstruction, so
+     * `e2e/ganjil-genap.spec.ts` can assert what the engine was actually asked for — including the
+     * absence of `exclude_polygons` in a Nonaktif run — instead of trusting the panel's own text.
+     * Like the diagnostics hook it only reads; nothing here can start or change a route.
+     */
+    valhallaLastRequest?: () => unknown;
   }
+}
+
+/**
+ * Install the read-only "last request" hook.
+ * @param read - Returns the request the app last handed to the SDK.
+ * @remarks Two hooks, one convention: measurement surfaces the acceptance tests need, added here so
+ * they are declared in the same place rather than scattered through the store.
+ */
+export function installLastRequestHook(read: () => unknown): void {
+  if (typeof window !== 'undefined') window.valhallaLastRequest = read;
 }
 
 export interface RouteClientOptions {

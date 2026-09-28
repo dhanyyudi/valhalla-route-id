@@ -23,6 +23,38 @@ from CARTO, which is third-party traffic on every page load (see [Attribution](#
 - Watch progress while tiles are read, cancel a long route, and then read the distance, duration,
   simulated departure/arrival time, dataset release, bytes fetched and decoded geometry from the
   status bar and the map.
+- Apply the Jakarta **ganjil-genap** (odd-even) constraint: pick `Ganjil`, `Genap` or `Nonaktif`, and
+  when the rule bites, the request carries `exclude_polygons` so Valhalla routes around the
+  restricted corridors — and the panel says afterwards which corridors the route still crosses.
+
+## Ganjil-genap constraint
+
+The rule is evaluated from the scenario, never from the wall clock: the simulated departure time (the
+arrival time for an `arrive_by` scenario) decides whether the constraint is in force, so a shared
+scenario always reproduces the same verdict. It follows Pergub DKI 88/2019 as the source
+implementation does — Monday to Friday, 06:00–10:00 and 16:00–21:00 WIB, plate parity against the
+date's parity, Jakarta/Jabodetabek only, and **motorcycles and motor scooters exempt** (the panel says
+so rather than silently ignoring the toggle).
+
+When the verdict is `restricted`, `src/core/gage-request.ts` packs buffered corridor rings into the
+request's `exclude_polygons` field and `src/core/gage-crossing.ts` intersects the returned geometry
+against the same rings. Two limits shape what that can achieve, and the interface reports both:
+
+- Valhalla accepts a ring as a JSON array of `[longitude, latitude]` pairs — not the comma-separated
+  string an earlier spike passed, which the engine silently ignores entirely (see the header of
+  `tools/build-gage-polygons.ts` for the source evidence and the probe that confirmed it).
+- `service_limits.max_exclude_polygons_length` is 10,000 m and it applies to the **sum** of every
+  ring's perimeter in one request. The 25 corridors are ~141 km of buffered ring between them, so a
+  request carries about 9.5 km of it: the rings overlapping the route most, with the rest named in
+  the crossing report instead of being quietly dropped. Plan for the constraint to bend a route, not
+  to make it exempt.
+
+The corridors are data, not code: `data/jakarta-ganjil-genap.geojson` holds 25 named LineStrings each
+declaring `bufferMeters: 35` (and 28 toll-access Points this feature does not use), and
+`pnpm build:gage` turns them into `src/data/gage-polygons.json` — closed, measured rings plus the
+centre-lines the map draws. `pnpm build:gage:check` fails when that artifact is stale; a unit test
+asserts the output is byte-identical between runs, that every ring is closed and non-degenerate, and
+that each buffered area matches the corridor length it came from.
 
 ## How it works
 
@@ -213,6 +245,13 @@ equality rule and the per-case outcome, is in
   of it under `packages/`, with the upstream license kept at
   [`third_party/valhalla-wasm/LICENSE`](third_party/valhalla-wasm/LICENSE).
 - Basemap tiles © [CARTO](https://carto.com/attributions), using OpenStreetMap data.
+- Ganjil-genap corridor geometry: `data/jakarta-ganjil-genap.geojson`, version 2.0.0 (built
+  2026-05-09), converted from the public community Google My Maps
+  ["Ganjil Genap (GaGe) Jakarta 2026"](https://www.google.com/maps/d/kml?mid=1MJ723E9f9hrwzbuWcK1mVDzlRVw4uyTz&forcekml=1)
+  — 25 road corridors plus 28 toll-access points. Bundled with its `_meta` block intact; the
+  redistribution is by permission of nothing but the source's own public sharing, so if that is
+  unwanted the file can move to R2 and be fetched at runtime without a code change beyond the data
+  URL.
 - This repository itself is MIT — see [`LICENSE`](LICENSE).
 
 ## Repository layout
@@ -221,7 +260,9 @@ equality rule and the per-case outcome, is in
 .github/workflows/ci.yml   verify on every push and PR; deploy + acceptance on main
 e2e/                       Playwright acceptance route and the decoded-tile cache measurement,
                            both against a live deployment
-src/                       the SPA: map, route panel, status bar, scenario state
+src/                       the SPA: map, route panel, status bar, scenario state, ganjil-genap rules
+src/data/gage-polygons.json  generated corridor rings (pnpm build:gage), committed
+data/                      ganjil-genap corridor source data, committed with its _meta provenance
 packages/valhalla-core/    request validation, costing profiles, tile store and loader
 packages/valhalla-browser/ the WASM runtime packaged for the browser
 packages/valhalla-server/  the same runtime for Node and Cloudflare Workers

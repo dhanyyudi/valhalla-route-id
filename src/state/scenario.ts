@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import type { ProgressEvent as SdkProgress, RouteResult } from 'valhalla-browser';
 import { buildRouteRequest, type Profile, type TimeMode, type Waypoint } from '../core/request-builder';
-import { createRouteClient, type RouteClient } from '../router/client';
+import { planGageRequest, type GagePlan } from '../core/gage-request';
+import { findCorridorCrossings, type CrossingReport } from '../core/gage-crossing';
+import { type LngLat } from '../core/gage-geometry';
+import { type PlateParity } from '../core/ganjil-genap';
+import { BUFFER_METERS, CORRIDORS } from '../core/gage-corridors';
+import { routeCoordinates } from '../map/route-layer';
+import { createRouteClient, installLastRequestHook, type RouteClient } from '../router/client';
 
 export type OptionValue = number | boolean | string;
 
@@ -76,10 +82,16 @@ export interface ScenarioState {
   timeMode: TimeMode;
   departure: string;
   options: Record<string, OptionValue>;
+  /** Declared plate parity for the ganjil-genap rule; `off` means the constraint is not applied. */
+  plateParity: PlateParity;
   result: RouteResult | null;
   status: RouteStatus;
   error: RouteFailure | null;
   progress: SdkProgress | null;
+  /** The constraint plan the last `run()` sent, so the panel reports what was actually requested. */
+  gage: GagePlan | null;
+  /** Corridors the returned route still runs through; null before the first route. */
+  crossings: CrossingReport | null;
   addWaypoint(point: Waypoint): void;
   removeWaypoint(index: number): void;
   reverseWaypoints(): void;
@@ -87,6 +99,9 @@ export interface ScenarioState {
   setProfile(profile: Profile): void;
   setTime(timeMode: TimeMode, departure?: string): void;
   setOption(key: string, value: OptionValue | undefined): void;
+  setPlateParity(plateParity: PlateParity): void;
+  /** Re-derive the constraint plan from the current state, for the panel's live status line. */
+  gagePlan(): GagePlan;
   run(): Promise<void>;
   cancel(): void;
 }
@@ -121,6 +136,37 @@ export function toRouteFailure(error: unknown): RouteFailure {
   };
 }
 
+/** The geometry the constraint is judged against: the last route if there is one, else the stops. */
+export function geometryForGage(state: Pick<ScenarioState, 'result' | 'waypoints'>): LngLat[] {
+  if (state.result) return routeCoordinates(state.result);
+  return state.waypoints.map(point => [point.lng, point.lat] as LngLat);
+}
+
+/**
+ * Plan the ganjil-genap constraint for a scenario, without routing anything.
+ *
+ * @param state - The fields the plan depends on.
+ * @returns The verdict, the rings the request would carry and what the budget left out.
+ * @remarks Pure and cheap (bounding-box tests over 30 rings), so the panel can call it on every
+ *   render and a scenario's status line never lags behind its controls.
+ */
+export function gagePlanFrom(state: Pick<ScenarioState, 'plateParity' | 'profile' | 'timeMode' | 'departure' | 'result' | 'waypoints'>): GagePlan {
+  return planGageRequest({
+    plateParity: state.plateParity,
+    profile: state.profile,
+    timeMode: state.timeMode,
+    departure: state.departure,
+    geometry: geometryForGage(state),
+    corridors: CORRIDORS,
+    bufferMeters: BUFFER_METERS,
+    now: new Date(),
+  });
+}
+
+/** The most recent request `run()` handed to the SDK, exposed read-only for the acceptance test. */
+let lastRequest: unknown;
+installLastRequestHook(() => lastRequest);
+
 const MANIFEST_URL: string | undefined = import.meta.env.VITE_MANIFEST_URL;
 
 let client: RouteClient | undefined;
@@ -142,10 +188,13 @@ export const useScenario = create<ScenarioState>((set, get) => ({
   timeMode: 'now',
   departure: defaultDeparture(),
   options: {},
+  plateParity: 'off',
   result: null,
   status: 'idle',
   error: null,
   progress: null,
+  gage: null,
+  crossings: null,
 
   addWaypoint(point) {
     const { waypoints } = get();
@@ -177,6 +226,12 @@ export const useScenario = create<ScenarioState>((set, get) => ({
     else options[key] = value;
     set({ options });
   },
+  setPlateParity(plateParity) {
+    set({ plateParity });
+  },
+  gagePlan() {
+    return gagePlanFrom(get());
+  },
   async run() {
     const { waypoints, profile, timeMode, departure, options } = get();
     if (waypoints.length < 2) {
@@ -188,13 +243,28 @@ export const useScenario = create<ScenarioState>((set, get) => ({
       set({ status: 'error', error: { code: 'CONFIG', message: 'VITE_MANIFEST_URL belum diatur pada build ini, jadi mesin rute tidak dapat dimuat.' } });
       return;
     }
-    set({ status: 'routing', error: null, progress: null });
+    // The constraint is planned from the scenario, not from the wall clock, and its rings go into
+    // the request only for a `restricted` verdict — every other status leaves `exclude_polygons`
+    // off the request entirely, so an existing scenario routes exactly as it did before this layer.
+    const gage = gagePlanFrom(get());
+    set({ status: 'routing', error: null, progress: null, gage });
+    const request = buildRouteRequest({
+      waypoints, profile, timeMode, departure, options,
+      ...(gage.excludePolygons.length > 0 ? { excludePolygons: gage.excludePolygons } : {}),
+    });
+    lastRequest = request;
     try {
-      const result = await active.route(buildRouteRequest({ waypoints, profile, timeMode, departure, options }));
-      set({ result, status: 'done', error: null, progress: null });
+      const result = await active.route(request);
+      set({
+        result,
+        status: 'done',
+        error: null,
+        progress: null,
+        crossings: findCorridorCrossings(routeCoordinates(result), CORRIDORS),
+      });
     } catch (error) {
       const failure = toRouteFailure(error);
-      set({ status: failure.code === 'CANCELLED' ? 'cancelled' : 'error', error: failure, progress: null });
+      set({ status: failure.code === 'CANCELLED' ? 'cancelled' : 'error', error: failure, progress: null, crossings: null });
     }
   },
   cancel() {
