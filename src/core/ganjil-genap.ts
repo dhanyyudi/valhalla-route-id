@@ -17,7 +17,10 @@ export type PlateParity = 'odd' | 'even' | 'off';
 export type GanjilGenapStatus =
   /** The vehicle class is exempt by regulation (motorcycle, motor scooter). */
   | 'exempt_profile'
-  /** The user turned the constraint off for this scenario. */
+  /**
+   * The constraint is not in force for this scenario: the user turned it off, the day is a weekend,
+   * the time is outside 06:00–10:00 and 16:00–21:00 WIB, or every point is outside Jakarta.
+   */
   | 'inactive_time'
   /** A weekday inside an active window, but the plate parity matches the date: may enter. */
   | 'allowed'

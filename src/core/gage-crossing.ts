@@ -8,9 +8,9 @@
  * request's perimeter budget are sent at all. So the same buffered rings that were handed to
  * Valhalla are intersected against the returned geometry, and whatever still crosses is named.
  *
- * Pure and synchronous: no React, no map, no I/O. `src/map/gage-layer.ts` queries the rendered
- * layers because that is what MapLibre can do efficiently; this module is the definition the tests
- * pin down, and `featuresToCrossings` is the shared shape both produce.
+ * Pure and synchronous: no React, no map, no I/O. `src/state/scenario.ts` calls the functions here
+ * with the same ring array it drew on the map and packed into the request, so the answer is a
+ * property of the geometry rather than of what MapLibre happens to have rendered.
  */
 import {
   boundsOverlap,
@@ -120,14 +120,14 @@ export function findCorridorCrossings(geometry: LngLat[], corridors: CorridorPol
 }
 
 /**
- * Build a report from MapLibre feature properties, so the map path and the pure path agree.
+ * Build a report from feature-like `{ id, name }` properties, merging repeats by corridor id.
  *
- * `src/map/gage-layer.ts` asks MapLibre which rendered corridor features a route line touches —
- * that query is what MapLibre is good at — and hands the hits here. One corridor may appear several
- * times (once per ring) and twice per query pass, so entries are merged by feature id.
+ * The shape adapter for callers that hold the corridor artifact as GeoJSON features rather than as
+ * rings; it is the same `CrossingReport` `findCorridorCrossings` returns, and the ring count it
+ * cannot know is filled in only by that function.
  *
  * @param features - `properties` of each hit: `id` and `name` from the artifact.
- * @returns The same shape `findCorridorCrossings` returns.
+ * @returns The merged corridors, one entry per distinct id, in first-seen order.
  */
 export function featuresToCrossings(features: Array<{ id?: unknown; name?: unknown }>): CrossingReport {
   const merged = new Map<string, CorridorCrossing>();
@@ -144,13 +144,14 @@ export function featuresToCrossings(features: Array<{ id?: unknown; name?: unkno
 /**
  * One Indonesian sentence for the panel.
  * @param report - The crossing report.
- * @param excluded - How many corridors the request asked Valhalla to avoid, if any.
+ * @param avoidedCorridors - How many distinct corridors the request asked Valhalla to avoid — the
+ *   unit the sentence names ("ruas"), never the number of rings the request carried.
  * @returns A sentence that never claims more than the geometry shows.
  */
-export function describeCrossings(report: CrossingReport, excluded: number): string {
+export function describeCrossings(report: CrossingReport, avoidedCorridors: number): string {
   if (report.count === 0) {
-    return excluded > 0
-      ? `Tidak ada ruas ganjil-genap yang masih dilintasi (${excluded} ruas diminta dihindari).`
+    return avoidedCorridors > 0
+      ? `Tidak ada ruas ganjil-genap yang masih dilintasi (${avoidedCorridors} ruas diminta dihindari).`
       : 'Tidak ada ruas ganjil-genap yang dilintasi.';
   }
   const names = report.corridors.map(corridor => corridor.name).join(', ');

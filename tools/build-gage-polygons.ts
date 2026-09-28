@@ -3,25 +3,29 @@
  *
  * ## What Valhalla's `exclude_polygons` actually accepts (verified, not assumed)
  *
- * Read from the pinned engine at `~/projects/valhalla-route-id/build/sources/valhalla` (Valhalla
- * 3.8.3, the revision this app ships as WASM) and then confirmed against the live engine by routing
- * this release's Jakarta pair through the WASM runtime with one polygon at a time:
+ * Read from the pinned engine's source — Valhalla 3.8.3,
+ * [`a60c7cbfc83e073f50887cd27e0109d02e6b64e5`](https://github.com/valhalla/valhalla/tree/a60c7cbfc83e073f50887cd27e0109d02e6b64e5),
+ * the revision this app ships as WASM; file references below are relative to that tree — and then
+ * confirmed against the live engine by routing this release's Jakarta pair through the WASM runtime
+ * with one polygon at a time:
  *
- * - **Container.** `src/worker.cc` reads `/exclude_polygons`; it must be an array or an object, and
- *   anything else gets only warning 204 and is ignored. Each entry is either a ring (a JSON array)
- *   or a GeoJSON feature object, in which case the parser walks
+ * - **Container.** `src/worker.cc:1104-1146` reads `/exclude_polygons`; it must be an array or an
+ *   object, and anything else gets only warning 204 and is ignored. Each entry is either a ring (a
+ *   JSON array) or a GeoJSON feature object, in which case the parser walks
  *   `/geometry/coordinates/0` and requires `/geometry/type == "Polygon"`.
- * - **Coordinate order: `[longitude, latitude]`.** `parse_ring()` (src/worker.cc:150) states it in
- *   its own comment — "Parses JSON rings of the form [[lon1, lat1], [lon2, lat2], ..." — and then
+ * - **Coordinate order: `[longitude, latitude]`.** `parse_ring()` (`src/worker.cc:150-186`) states it
+ *   in its own comment — "Parses JSON rings of the form [[lon1, lat1], [lon2, lat2], ..." — and then
  *   does `double lon = coords[0].GetDouble(); double lat = coords[1].GetDouble();`, rejecting a
  *   latitude outside ±90 with exception 137. The probe agrees: the same ~400 m Jakarta square
  *   written `[lon, lat]` moved the route from 24.516 km to 15.746 km, while the `[lat, lon]`
  *   encoding threw native 137.
  * - **Point separator: none.** A ring is an array of two-element arrays. The comma-separated
  *   string the earlier spike passed (`"106.8,-6.2 106.9,-6.3"`) is accepted by the type signature
- *   (`exclude_polygons?: string[]`) and then iterated as a *ring whose vertices are numbers* — the
- *   probe shows it changing nothing at all, which is exactly the "Valhalla accepted it but the
- *   coordinates were ambiguous" trap.
+ *   (`exclude_polygons?: string[]`) and then dropped without a word: an entry that is neither an
+ *   array nor an object leaves the parser with an *empty* ring (`src/worker.cc:1127-1136`), and
+ *   `src/loki/polygon_search.cc:103-105` returns no exclusions when the first ring has no
+ *   coordinates. The probe shows it changing nothing at all, which is exactly the "Valhalla accepted
+ *   it but nothing happened" trap.
  * - **Ring separator: one array entry per ring**, i.e. `[[[lon,lat],...], [[lon,lat],...]]`.
  * - **Closure: not required.** `edgedist`/`PBFToRing` close an open ring (the API reference says so
  *   explicitly), but every ring this script writes is already closed.

@@ -49,7 +49,17 @@ export interface CorridorRingSet {
   corridors: CorridorPolygons[];
 }
 
-/** Mean Earth radius (IUGG), the value Valhalla's Haversine strategy uses. */
+/**
+ * Mean Earth radius (IUGG) — our own measuring convention, deliberately *not* the engine's.
+ *
+ * Valhalla measures a ring with `kRadEarthMeters = 6378160.187f`
+ * (`valhalla/midgard/constants.h`, used by the perimeter sum in `src/loki/polygon_search.cc`), so it
+ * counts ~0.112 % more perimeter than this function does. The difference cannot reach the service
+ * limit: the packer spends at most `REQUEST_PERIMETER_BUDGET_METERS` (9,500 m) by this measuring
+ * stick, which is ≈9,511 m as Valhalla counts it, and the longest generated ring is 8,710 m here
+ * against a 10,000 m cap. The margin is what covers the approximation; anything that raises the
+ * budget or the per-ring ceiling must re-check it at 6378160.187, not at this value.
+ */
 const EARTH_RADIUS_METERS = 6371008.8;
 const METERS_PER_DEGREE_LATITUDE = 111132;
 const DEG = Math.PI / 180;
@@ -597,10 +607,11 @@ export function selectCorridorsForRoute(request: RingSelectionRequest): RingSele
  *
  * Valhalla's JSON parser reads `exclude_polygons` as an array whose entries are either rings or
  * GeoJSON feature objects, and `parse_ring` takes `coords[0]` as longitude and `coords[1]` as
- * latitude (src/worker.cc). A ring is therefore `[[lon, lat], ...]` — nested arrays, not the
- * comma-separated string the spike used, which the parser reads as one coordinate per character
- * and silently ignores. Native closes an open ring itself, but the generated rings are already
- * closed.
+ * latitude (src/worker.cc:1127-1146). A ring is therefore `[[lon, lat], ...]` — nested arrays, not
+ * the comma-separated string the spike used: an entry that is neither an array nor an object leaves
+ * the parser with an *empty* ring (src/worker.cc:1127-1136), and `src/loki/polygon_search.cc:103-105`
+ * then returns no exclusions at all, so the field is accepted and silently ignored. Native closes an
+ * open ring itself, but the generated rings are already closed.
  */
 export function encodeExcludePolygons(rings: Array<{ ring: CorridorRing }>): number[][][] {
   return rings.map(({ ring }) => ring.coordinates.map(([lng, lat]) => [lng, lat]));
