@@ -16,6 +16,11 @@ if (releases.length !== 1)
   throw new Error(`Expected exactly one liechtenstein-2015-v1-* release under ${RELEASE_DIR}, found ${releases.length}. Build it with pnpm run data:region (Docker on the homeserver) and sync public/datasets/ back.`);
 const release = releases[0];
 
+// 8790 is also the port `tools/verify/compare.mjs` serves the Indonesia release on, so a corpus
+// run held it and this suite failed to bind while a long verification was in flight. Override it
+// with VALHALLA_TEST_PORT to run the two side by side (tools/smoke/route-smoke.test.ts uses 8789).
+const port = Number(process.env.VALHALLA_TEST_PORT ?? 8790);
+
 const vaduz = { lat: 47.1392862, lon: 9.5227962 };
 const malbun = { lat: 47.145, lon: 9.5168 };
 /** A third stop between the two towns, so an optimized order has something to reorder. */
@@ -29,7 +34,7 @@ let server: { url: string; close(): Promise<void> };
 let router: Router;
 
 beforeAll(async () => {
-  server = await serveDataset({ root: join(RELEASE_DIR, release), port: 8790 });
+  server = await serveDataset({ root: join(RELEASE_DIR, release), port });
   const manifest = JSON.parse(readFileSync(join(RELEASE_DIR, release, 'manifest.json'), 'utf8'));
   router = await createRouter({ manifestUrl: `${server.url}/manifest.json`, transport: 'individual-tiles' });
   expect(manifest.release).toBe(release);
