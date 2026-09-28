@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Task 8 comparison runner: native reference versus browser WASM, byte-for-byte.
+ * Native-versus-WASM comparison runner: native reference versus browser WASM, byte-for-byte.
  *
  * Both halves answer the *same* corpus lines (`tools/verify/corpus.jsonl`) on the *same* graph:
  * the pinned `native-reference` binary reads the build work directory's tiles inside the pinned
@@ -373,7 +373,7 @@ async function main() {
       '',
       `- ${byNormalisation.length} are explained by the SDK rewriting the request. The SDK host`,
       '  (`packages/valhalla-core/src/profiles.ts`) resolves the costing, pins `units` to kilometres',
-      '  and resolves the language before the WASM engine sees it — and, since the Task 8 fix round,',
+      '  and resolves the language before the WASM engine sees it — and, since the correlation-default fix,',
       '  leaves each location\'s `radius` and `minimum_reachability` exactly as the caller sent them,',
       `  so native\'s own correlation defaults apply. \`${NORMALISED_NATIVE_PATH}\` records the pinned native`,
       `  binary's answers to those same rewritten requests (generated from \`${join('tools', 'verify', 'corpus-sdk-normalised.jsonl')}\`);`,

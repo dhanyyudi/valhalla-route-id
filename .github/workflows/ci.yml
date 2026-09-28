@@ -114,7 +114,9 @@ jobs:
           command: deploy
 
       # Acceptance against what was just published, not against the build output. The spec reads
-      # E2E_BASE_URL; PROD_URL is the repository variable that holds the Worker's origin.
+      # E2E_BASE_URL; PROD_URL is the repository variable that holds the Worker's origin. An unset
+      # variable arrives as an empty string, which the spec treats as "unset" and replaces with the
+      # default origin it documents — so a missing PROD_URL cannot fail the job with "Invalid URL".
       - run: pnpm exec playwright install --with-deps chromium
       - name: Acceptance route against production
         env:

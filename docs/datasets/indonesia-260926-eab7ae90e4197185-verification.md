@@ -63,7 +63,7 @@ Of 2 differing case(s): 0 verified disagreement(s) (0 reproduced byte-for-byte o
 
 - 0 are explained by the SDK rewriting the request. The SDK host
   (`packages/valhalla-core/src/profiles.ts`) resolves the costing, pins `units` to kilometres
-  and resolves the language before the WASM engine sees it — and, since the Task 8 fix round,
+  and resolves the language before the WASM engine sees it — and, since the correlation-default fix,
   leaves each location's `radius` and `minimum_reachability` exactly as the caller sent them,
   so native's own correlation defaults apply. `tools/verify/native-sdk-normalised.jsonl` records the pinned native
   binary's answers to those same rewritten requests (generated from `tools/verify/corpus-sdk-normalised.jsonl`);

@@ -16,7 +16,8 @@ describe('validateRequest', () => {
     const result = validateRequest({ locations: [at(-6.2, 106.8), at(-6.5, 107.0), at(-6.9, 107.6)], costing: 'auto' });
     expect(result.locations).toHaveLength(3);
     // Correlation defaults belong to native: the validator must not invent `radius` or
-    // `minimum_reachability`, because forcing them changes a caller's answer (Task 8 review, fix 2).
+    // `minimum_reachability`, because forcing them changes a caller's answer (the
+    // correlation-default fix recorded in the verification report).
     for (const location of result.locations) {
       expect(location).not.toHaveProperty('radius');
       expect(location).not.toHaveProperty('minimum_reachability');

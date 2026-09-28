@@ -4,7 +4,7 @@ import { defineConfig } from '@playwright/test';
  * Browser selection.
  *
  * Default: Playwright's own Chromium. `E2E_CHANNEL=chrome` drives an installed Google Chrome
- * instead, which is what the machine that ran the Task 11 acceptance test used (the download of
+ * instead, which is what the machine that first ran the acceptance test used (the download of
  * the bundled build stalled there), and `E2E_ARGS` adds launch flags.
  *
  * Branded Chrome launched headless loses its WebGL context about a second after the map is

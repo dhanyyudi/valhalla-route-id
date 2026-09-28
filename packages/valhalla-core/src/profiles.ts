@@ -42,9 +42,9 @@ export interface ValidateRequestOptions {
  * defaults are what let loki correlate a destination to a usable edge. Forcing
  * `minimum_reachability: 0` instead allowed correlation to a low-reachability edge inside a small,
  * unconnected component, which flipped three of the sixteen native-versus-WASM corpus answers (one
- * route to `NO_ROUTE`/error 442, one to a different 97.186 km route; see the Task 8 verification
- * report and the review that produced this change). A caller that wants a value supplies it, and a
- * supplied value must be a finite number ≥ 0.
+ * route to `NO_ROUTE`/error 442, one to a different 97.186 km route; see
+ * `docs/datasets/indonesia-260926-eab7ae90e4197185-verification.md`). A caller that wants a value
+ * supplies it, and a supplied value must be a finite number ≥ 0.
  */
 export function validateRequest(request: unknown, options: ValidateRequestOptions = {}): NormalizedRequest {
   if (!object(request)) return invalid('A route request is required.');

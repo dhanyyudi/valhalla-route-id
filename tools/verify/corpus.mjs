@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Generate the native-versus-WASM verification corpus (Task 8).
+ * Generate the native-versus-WASM verification corpus.
  *
  * Two files are written, and they must stay aligned by index:
  *
@@ -25,7 +25,7 @@
  *
  * Usage: node tools/verify/corpus.mjs [release] [--sdk-normalised]
  *
- * The corpus is unchanged by the Task 8 fix round; `--sdk-normalised` should be re-run whenever
+ * The corpus is unchanged by the correlation-default fix; `--sdk-normalised` should be re-run whenever
  * `sdkNormalised` changes, because the control output must answer the request the current SDK
  * actually sends.
  */
@@ -34,7 +34,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** Release the Task 8 corpus was built against; also the default for the CLI argument. */
+/** Release the verification corpus was built against; also the default for the CLI argument. */
 export const DEFAULT_RELEASE = 'indonesia-260926-eab7ae90e4197185';
 export const CORPUS_PATH = join('tools', 'verify', 'corpus.jsonl');
 export const NAMES_PATH = join('tools', 'verify', 'corpus-names.json');
@@ -89,7 +89,8 @@ const FORBIDDEN = ['name', 'case', 'label', 'note'];
  * forced to kilometres, and the language comes from `directions_options.language` or defaults to
  * `id-ID`. It deliberately does **not** write `radius` or `minimum_reachability` any more: the
  * validator forwards those only when the caller sent them, so native's own defaults apply — see
- * the Task 8 review's fix 2 and the change note on `validateRequest`.
+ * the note on the correlation-default fix in the verification report, and the change note on
+ * `validateRequest`.
  *
  * The comparison runner uses this as a **control**: when a corpus case differs, running the pinned
  * native binary on this rewritten request shows whether the difference is the SDK's request

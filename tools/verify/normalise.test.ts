@@ -1,9 +1,9 @@
 // @vitest-environment node
 //
-// Focused unit coverage for the Task 8 comparison rule. The 3.8 GB Indonesia graph is not
+// Focused unit coverage for the comparison rule. The 3.8 GB Indonesia graph is not
 // needed here: these tests pin the properties that decide every verdict — error normalisation,
 // sidecar alignment, corpus shape and exact (non-tolerant) equality of the returned JSON — plus
-// the two guards the Task 8 review asked for: the verdict classification must fail **closed**
+// the two provenance guards: the verdict classification must fail **closed**
 // when the SDK-normalised control output is missing, and a recorded output must be refused when
 // it was stamped against a different corpus.
 import { describe, expect, it } from 'vitest';
@@ -137,8 +137,8 @@ describe('corpus', () => {
   it('mirrors the SDK host request normalisation', () => {
     const normalised = sdkNormalised({ locations: [{ lat: -6.1754, lon: 106.8272, preferred_side: 'opposite' }], costing: 'truck' });
     expect(normalised.locations[0]).toEqual({ lat: -6.1754, lon: 106.8272, preferred_side: 'opposite' });
-    // The SDK host stopped forcing correlation defaults (Task 8 review, fix 2): the control must
-    // mirror what the SDK really sends, or every classification it produces is worthless.
+    // The SDK host stopped forcing correlation defaults (the correlation-default fix): the control
+    // must mirror what the SDK really sends, or every classification it produces is worthless.
     expect(normalised.locations[0]).not.toHaveProperty('radius');
     expect(normalised.locations[0]).not.toHaveProperty('minimum_reachability');
     expect(normalised.costing).toBe('truck');
@@ -167,7 +167,7 @@ describe('summarise', () => {
   });
 });
 
-// Regression coverage for Task 8 review finding I1. The control output that proves a difference is
+// Regression coverage for the fail-closed rule. The control output that proves a difference is
 // only a request rewrite is gitignored, so a fresh clone — or a re-run that skips the extra
 // build-host step — reaches the classification with no control at all. The old runner then
 // computed "0 genuine disagreements" from an empty bucket and printed the zero-disagreement
@@ -263,7 +263,7 @@ describe('classifyDifferences (fail closed)', () => {
   });
 });
 
-// Regression coverage for the Task 8 review's M4: alignment is by line index, so a corpus edit
+// Regression coverage for the provenance guard: alignment is by line index, so a corpus edit
 // that keeps the line count would otherwise compare each recorded half against the wrong request.
 describe('output provenance', () => {
   const corpus = '{"locations":[{"lat":1,"lon":1},{"lat":2,"lon":2}]}\n{"locations":[{"lat":3,"lon":3},{"lat":4,"lon":4}]}\n';

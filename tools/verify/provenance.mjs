@@ -1,5 +1,5 @@
 /**
- * Provenance guards for the Task 8 comparison runner: *which requests does a recorded output
+ * Provenance guards for the comparison runner: *which requests does a recorded output
  * answer?*
  *
  * `tools/verify/native.jsonl` is produced out of band (the pinned binary inside the build image on

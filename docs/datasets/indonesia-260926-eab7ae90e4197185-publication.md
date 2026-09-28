@@ -65,7 +65,7 @@ unclassified rows — holds: the same run reports **0 verified disagreements** a
 and the regenerated report states that the two engines agreed byte-for-byte on every request they
 were both given. The two timeouts are the known runtime limitation recorded in
 `docs/datasets/indonesia-260926-eab7ae90e4197185.md` (bicycle and pedestrian on this WASM build;
-Task 11 must not ship them without addressing it).
+the app must not ship them without addressing it).
 
 ## Deployed verification
 
@@ -118,7 +118,7 @@ The startup bytes are exactly the delivered metadata: the 1,477,817-byte deliver
 the deployed origin. The route's answer is byte-identical — after the corpus's own canonicalisation
 of `55.0` versus `55` — to both the pinned native reference and the recorded SDK half of the corpus.
 
-## What the end-to-end route measured (Task 11 input)
+## What the end-to-end route measured
 
 The route is not cheap, and the numbers are worth carrying forward:
 
@@ -136,7 +136,7 @@ The route is not cheap, and the numbers are worth carrying forward:
   once. The run above used that same semantic through `tools/publish/client-cache.mjs`, and a cold
   cache is what fetches the 207 MiB.
 - Even with a warm cache the route spends ~50–260 s re-reading and re-validating 93.6 GB of tile
-  bytes (sha256 on every read), against the host's 300 s maximum. That is the margin Task 11 has to
+  bytes (sha256 on every read), against the host's 300 s maximum. That is the margin the app has to
   plan around; the corpus's own numbers (85 s locally on the same graph) show it is decode/read
   pressure, not routing.
 

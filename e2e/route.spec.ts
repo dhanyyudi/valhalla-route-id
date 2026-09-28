@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * Browser acceptance test for Task 11, run against the deployed Worker.
+ * Browser acceptance test, run against the deployed Worker.
  *
  * One test, one route: paste Jakarta and Bandung, pick motorcycle, depart at 07:00, press
  * "Hitung rute", and require that the status bar reports a distance and a duration and that the
@@ -11,7 +11,10 @@ import path from 'node:path';
  *
  * Point it somewhere else with E2E_BASE_URL (for example a local `pnpm preview`).
  */
-const BASE_URL = process.env.E2E_BASE_URL ?? 'https://valhalla-route-id.gislabs.workers.dev';
+// `||`, not `??`: CI passes `E2E_BASE_URL: ${{ vars.PROD_URL }}`, and an unset repository
+// variable arrives as an empty string, which `??` accepts — `page.goto('')` then fails with
+// "Invalid URL" instead of falling back to the origin documented here.
+const BASE_URL = process.env.E2E_BASE_URL?.trim() || 'https://valhalla-route-id.gislabs.workers.dev';
 const JAKARTA = '-6.1754, 106.8272';
 const BANDUNG = '-6.9175, 107.6191';
 const RELEASE = 'indonesia-260926-eab7ae90e4197185';

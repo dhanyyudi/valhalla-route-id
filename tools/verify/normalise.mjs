@@ -1,5 +1,5 @@
 /**
- * Normalisation helpers shared by the Task 8 comparison runner and its unit test.
+ * Normalisation helpers shared by the comparison runner and its unit test.
  *
  * These functions are deliberately small and total: the whole native-versus-WASM verdict is
  * `canonicalJson(...)` equality, so anything that could hide a difference (sorting keys,

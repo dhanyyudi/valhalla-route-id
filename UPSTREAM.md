@@ -25,7 +25,7 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
    numbers), so native's own correlation defaults apply — `minimum_reachability: 50` in this
    project's pinned configs — and a caller that wants a value can still set it deliberately. The
    forced values were not harmless: they moved three of the sixteen native-versus-WASM corpus
-   answers, one of them from a route to `NO_ROUTE` (Task 8 review fix 2; see
+   answers, one of them from a route to `NO_ROUTE` (the end state of that corpus is recorded in
    `docs/datasets/indonesia-260926-eab7ae90e4197185-verification.md`).
 2. `packages/valhalla-core/src/types.ts` — extended request/result types, including
    `IsochroneRequest` and `MatrixRequest`.
@@ -116,7 +116,7 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
 
     git clone https://github.com/tobilg/valhalla-wasm /tmp/valhalla-wasm-next
     git -C /tmp/valhalla-wasm-next checkout <new tag>
-    # re-copy the same paths, then re-apply the eight divergences above
+    # re-copy the same paths, then re-apply the ten divergences above
     pnpm install && pnpm test && pnpm run build:sdk && pnpm run smoke
 
 Never take a new upstream release without rebuilding the Indonesia dataset with
@@ -126,10 +126,11 @@ its pinned Valhalla revision.
 
 The shared `call_actor` refactor is behaviour-preserving. Eight route scenarios (two and three
 locations, `auto`, `bicycle`, `pedestrian`, `truck`, a departure time, `alternates` and
-`costing_options`) were captured against the published `wasm-runtime-v1` runtime
-(`2097e577…`/`fabe0f48…`) and against the rebuilt runtime (`81d3d924…`/`f6038d92…`) over
-`liechtenstein-2015-v1-d769cb7c11b2936d`; the two captures are byte-identical, and the five
-`tools/smoke/route-smoke.test.ts` cases pass unchanged against the rebuild.
+`costing_options`) were captured against the runtime release `wasm-runtime-v1` carried at the time
+(`2097e577…`/`fabe0f48…`, since replaced by the rebuilt pair) and against the rebuilt runtime
+(`81d3d924…`/`f6038d92…`) over `liechtenstein-2015-v1-d769cb7c11b2936d`; the two captures are
+byte-identical, and the five `tools/smoke/route-smoke.test.ts` cases pass unchanged against the
+rebuild.
 
 ## WASM runtime artifacts
 
@@ -142,11 +143,10 @@ CI downloads it before packaging the SDK, because CI has no Docker.
 | `valhalla.wasm` | 10,109,445 | `81d3d9241c897d822a672eb962a4994cf03f79c7c1eb3377b999281bab404744` |
 | `valhalla.js` | 117,879 | `f6038d92d60ba2850300c73c9b8a9f01062acdc81610a666f3b22ef85c0acbbe` |
 
-These are the artifacts built from the three-export `runtime.cpp`. The release still carries the
-previous pair (`2097e57700e51bc703da06ecd74fb2edf656b58173e51488a3cdc9ffe0cc0db1`,
-`fabe0f4830ab5bbde355c9ebc749b4b5dc83bffb05930080bf6f3d74961fa2bb`), so it must be republished
-before CI packages the SDK — packaging verifies the downloaded binary against
-`native/runtime-lock.json` and fails on a mismatch.
+These are the artifacts built from the three-export `runtime.cpp`, and they are the pair the release
+now carries: a download of `wasm-runtime-v1` is byte-identical to `native/runtime-lock.json`, which
+is the hash `pnpm run build:sdk` checks before packaging, so CI can package the SDK from the release
+as it stands. The superseded pair (`2097e577…`/`fabe0f48…`) is history, not a pending task.
 
 `native/runtime-lock.json` records the same hashes. A rebuild that changes them must update
 both the lockfile and this release (`gh release upload wasm-runtime-v1 valhalla.js valhalla.wasm --clobber`), and

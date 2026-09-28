@@ -6,8 +6,9 @@ demand as HTTP byte ranges. Place waypoints on the map, pick a vehicle and a dep
 time, and inspect the route the engine actually returned — geometry, distance, duration and
 turn-by-turn manoeuvres.
 
-Nothing routes on a server. The app is a static bundle, and the only traffic leaving the browser is
-the graph data it reads.
+Nothing routes on a server. The app is a static bundle. The only *routing* traffic leaving the
+browser is the graph data it reads; the map also fetches its basemap style, vector tiles and glyphs
+from CARTO, which is third-party traffic on every page load (see [Attribution](#attribution)).
 
 **Live:** <https://valhalla-route-id.gislabs.workers.dev>
 
@@ -35,8 +36,10 @@ One Cloudflare Worker is the whole backend:
 | SDK | `packages/valhalla-*` | A pinned fork of [`tobilg/valhalla-wasm`](https://github.com/tobilg/valhalla-wasm) 0.2.1 with its own request validator and a fetch-backed tile store |
 
 The browser asks for the release manifest, learns every tile's offset, length and ETag, then reads
-the byte ranges it needs straight out of the archive. Tiles are cached in memory for the session, so
-the second route is much faster than the first.
+the byte ranges it needs straight out of the archive. Those responses are immutable for a year, so
+the browser's own HTTP cache holds them and a second route should fetch far less than the first —
+expected, not measured. The SDK's decoded-tile cache is a working set, not a copy of the graph: it
+is capped at 96 MiB, and the release's distinct ranges total roughly 207 MiB.
 
 The tile cache is explicitly budgeted: the app requests **96 MiB** (`memoryBudgetBytes`
 100663296) because the largest tile in this release is 48,442,160 B. The SDK's 32 MiB default
@@ -80,6 +83,8 @@ graph.
 
 To serve a release from disk instead of over the network — useful when you have the graph locally —
 put it under `public/datasets/` and run `pnpm serve:dataset` (port 8788), then use its manifest URL.
+Both that server and the deployed Worker answer `/datasets/*` with `Access-Control-Allow-Origin: *`,
+so either manifest URL can be read from the `http://localhost:5173` dev server.
 
 ### Checks
 
@@ -115,7 +120,8 @@ reports the engine's error rather than guessing.
 
 A 16-request corpus (short urban pairs, long inter-island pairs, ferries, a departure time, all six
 costings) was routed twice — once by the pinned native binary inside the exact build image, once
-through the WASM runtime in a browser-shaped environment — and the two answers compared as
+through the same WASM runtime, SDK loader and tile store in Node (`valhalla-server/node`, WASM
+memory 256/512 MiB rather than the browser adapter's 128/512) — and the two answers compared as
 serialised text, with no key reordering and no number fiddling.
 
 **14 of the 16 requests are byte-identical.** The two exceptions are `bicycle` and `pedestrian`
@@ -140,7 +146,9 @@ the per-case outcome, is in
 - **Indonesia only.** Coverage is the release above; there is no global graph.
 - **A cold first route is heavy.** It can read a few hundred megabytes of ranges out of the 2 GB
   archive, and has been measured at 79–101 s for the largest (48 MB) tile on a congested link.
-  Later routes reuse the in-memory tile cache.
+  Later routes should be cheaper because the browser's HTTP cache keeps the immutable dataset
+  responses, not because the app caches tiles in memory: the decoded-tile cache is capped at 96 MiB
+  against roughly 207 MiB of distinct ranges.
 
 ## Attribution
 
