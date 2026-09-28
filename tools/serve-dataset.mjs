@@ -35,6 +35,18 @@ function manifestEtags(manifest) {
 }
 
 /**
+ * The address this server binds and advertises.
+ *
+ * Loopback only, deliberately. Every caller reads the release from the same machine — the two
+ * smoke suites, the corpus runners under `tools/verify/`, and local development — while
+ * `server.listen(port)` with no host binds the wildcard address and makes macOS raise its
+ * "Do you want the application node to accept incoming network connections?" prompt on every
+ * start, for exposure nothing here uses. Naming `127.0.0.1` in the returned URL as well keeps
+ * callers off `localhost`, which can resolve to `::1` first and miss the IPv4 socket.
+ */
+const HOST = '127.0.0.1';
+
+/**
  * Serve one release directory over HTTP with byte ranges, mounted under its release name.
  *
  * The mount prefix is not cosmetic: the SDK's loader requires the manifest URL's parent
@@ -42,7 +54,8 @@ function manifestEtags(manifest) {
  * fetch `${url}/manifest.json` and the loader accepts the release identity it validated.
  *
  * @param {{ root: string, port?: number }} [options] release directory to serve
- * @returns {Promise<{ url: string, close: () => Promise<void> }>} rejects when the port cannot be bound
+ * @returns {Promise<{ url: string, close: () => Promise<void> }>} `url` is the loopback mount
+ *   point; rejects when the port cannot be bound
  */
 export function serveDataset(options = {}) {
   const { root, port = 8788 } = options;
@@ -109,8 +122,8 @@ export function serveDataset(options = {}) {
     // `reject` after `ready` has already run is a no-op, so this also keeps a later socket error
     // from becoming an uncaught exception.
     server.on('error', reject);
-    server.listen(port, () => ready({
-      url: `http://localhost:${port}${mount}`,
+    server.listen(port, HOST, () => ready({
+      url: `http://${HOST}:${port}${mount}`,
       close: () => new Promise(done => {
         // The SDK's fetch keeps sockets alive; without this the close callback never fires.
         server.close(done);
