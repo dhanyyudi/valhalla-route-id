@@ -5,10 +5,10 @@ import { MapView } from './map/MapView';
 import { corridorBounds, drawGageLayer, setGageVisible } from './map/gage-layer';
 import {
   animateRoute, clearLegLabels, clearRoutes, clearWaypoints, drawLegLabels, drawRoute, drawWaypoints,
-  routeCoordinates, setWaypointsBusy, type AnimationFrame,
+  routeCoordinates, setRouteStale, setWaypointsBusy, type AnimationFrame,
 } from './map/route-layer';
 import { useProcessLog } from './state/process-log';
-import { useScenario } from './state/scenario';
+import { MAX_WAYPOINTS, isResultStale, resultMatchesStops, useScenario } from './state/scenario';
 import { useView } from './state/view';
 import { GageLegend, MapSidebar, ViewControls } from './ui/MapSidebar';
 import { ProcessLog } from './ui/ProcessLog';
@@ -16,7 +16,8 @@ import { RouteHud } from './ui/RouteHud';
 import { RoutePanel } from './ui/RoutePanel';
 import { RoutingLoader } from './ui/RoutingLoader';
 import { StatusBar } from './ui/StatusBar';
-import { Toast } from './ui/Toast';
+import { Toast, useToast } from './ui/Toast';
+import { WasmExplainer } from './ui/WasmExplainer';
 import { useTimeline } from './ui/useTimeline';
 import './styles.css';
 
@@ -40,10 +41,23 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-/** Padding that keeps a fitted route clear of the panel on the left and the sidebar on the right. */
+/**
+ * Padding that keeps a fitted route clear of the panel on the left and the sidebar on the right.
+ * Measured from the columns actually on screen and capped at 30% of the width each: fixed 400 px
+ * sides were wider than a portrait tablet's map, and MapLibre then refused to fit at all.
+ */
 function fitPadding(map: MapLibreMap) {
-  const wide = map.getContainer().clientWidth >= 768;
-  return wide ? { top: 70, bottom: 130, left: 400, right: 400 } : { top: 40, bottom: 140, left: 30, right: 30 };
+  const box = map.getContainer().getBoundingClientRect();
+  const cap = (value: number) => Math.max(20, Math.min(value, box.width * 0.3));
+  const panel = document.querySelector('[data-testid="route-panel"]')?.getBoundingClientRect();
+  const sidebar = document.querySelector('[data-testid="map-sidebar"]')?.getBoundingClientRect();
+  const footer = document.querySelector('[data-testid="status-bar"]')?.getBoundingClientRect();
+  return {
+    top: 60,
+    bottom: cap(footer ? box.bottom - footer.top + 20 : 120),
+    left: cap(panel && panel.width < box.width * 0.6 ? panel.right - box.left + 20 : 30),
+    right: cap(sidebar ? box.right - sidebar.left + 20 : 30),
+  };
 }
 
 export default function App() {
@@ -61,12 +75,18 @@ export default function App() {
   const showGage = useView(state => state.showGage);
   const logOpen = useProcessLog(state => state.open);
   const timeline = useTimeline();
+  const stale = useScenario(isResultStale);
+  const stopsMatch = useScenario(resultMatchesStops);
   const fittedShared = useRef(false);
   // jsdom has no matchMedia; the desktop layout is the one the shell test renders.
-  const wide = useMediaQuery('(min-width: 768px)') || typeof matchMedia !== 'function';
+  // The two side columns need ~46rem between them; below 1024 px (tablets in portrait) they left a
+  // sliver of map, so the sidebar becomes the phone's sheets there too.
+  const wide = useMediaQuery('(min-width: 1024px)') || typeof matchMedia !== 'function';
 
   const addWaypoint = useCallback((point: { lng: number; lat: number }) => {
-    useScenario.getState().addWaypoint(point);
+    if (!useScenario.getState().addWaypoint(point)) {
+      useToast.getState().show(`Maksimal ${MAX_WAYPOINTS} titik per rute — hapus satu titik dulu.`, 'error');
+    }
   }, []);
 
   // The address bar always carries the scenario, so a reload or a copied link reopens it.
@@ -98,19 +118,23 @@ export default function App() {
   // only while that route still has one leg per gap between the stops being shown.
   useEffect(() => {
     if (!map) return;
-    const matches = result !== null && result.native.trip.legs.length === waypoints.length - 1;
     drawWaypoints(map, waypoints, {
-      times: matches ? timeline?.times : undefined,
-      colored: matches,
-      onMove: (index, point) => {
-        useScenario.getState().moveWaypoint(index, point);
-        if (useView.getState().autoRoute) useScenario.getState().requestRun();
-      },
+      times: stopsMatch ? timeline?.times : undefined,
+      colored: stopsMatch,
+      // The store re-routes after the move when auto-route is on.
+      onMove: (index, point) => useScenario.getState().moveWaypoint(index, point),
       onRemove: index => useScenario.getState().removeWaypoint(index),
     });
     setWaypointsBusy(map, useScenario.getState().status === 'routing');
-    return () => clearWaypoints(map);
-  }, [map, waypoints, result, timeline]);
+    // No cleanup here: `drawWaypoints` replaces its own markers, and must be able to leave a marker
+    // that is being dragged alone. The markers go with the map.
+  }, [map, waypoints, stopsMatch, timeline]);
+
+  useEffect(() => () => { if (map) clearWaypoints(map); }, [map]);
+
+  useEffect(() => {
+    if (map) setRouteStale(map, stale);
+  }, [map, stale, result]);
 
   useEffect(() => {
     if (map) setWaypointsBusy(map, status === 'routing');
@@ -177,12 +201,13 @@ export default function App() {
 
   useEffect(() => {
     if (!map) return;
-    if (!result || !timeline) {
+    // Labels describe the legs between the listed stops; once a stop moves they would lie about it.
+    if (!result || !timeline || !stopsMatch) {
       clearLegLabels(map);
       return;
     }
     drawLegLabels(map, result, timeline.legs, timeline.times, legLabels);
-  }, [map, result, timeline, legLabels]);
+  }, [map, result, timeline, legLabels, stopsMatch]);
 
   const zoomToGage = useCallback(() => {
     if (!map) return;
@@ -199,15 +224,15 @@ export default function App() {
         <MapSidebar onZoomToGage={zoomToGage} />
       ) : logOpen ? (
         // Phones: no sidebar, so the log and the view controls are sheets behind their own buttons.
-        <ProcessLog className="absolute inset-x-2 bottom-16 z-30 h-[42dvh]" />
+        <ProcessLog className="absolute inset-x-2 bottom-16 z-40 h-[42dvh] md:bottom-24" />
       ) : viewSheet ? (
-        <div className="absolute inset-x-2 bottom-16 z-30 flex flex-col gap-2">
+        <div className="absolute inset-x-2 bottom-16 z-40 flex flex-col gap-2 md:bottom-24">
           <ViewControls />
           <GageLegend onZoomToGage={zoomToGage} />
           <button type="button" className="nb-button self-end px-2 py-1 text-xs" onClick={() => setViewSheet(false)}>Tutup</button>
         </div>
       ) : (
-        <div className="absolute bottom-16 right-2 z-30 flex gap-2">
+        <div className="absolute bottom-16 right-2 z-30 flex gap-2 md:bottom-24 md:right-4">
           <button type="button" data-testid="open-view-mobile" className="nb-button px-2 py-1 text-xs" onClick={() => setViewSheet(true)}>
             Tampilan
           </button>
@@ -223,6 +248,7 @@ export default function App() {
       )}
       <RoutingLoader />
       {status !== 'routing' ? <RouteHud frame={frame} /> : null}
+      <WasmExplainer />
       <Toast />
       <StatusBar geometryPoints={geometryPoints} />
     </main>

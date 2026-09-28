@@ -6,12 +6,13 @@ import { findCorridorCrossings, type CrossingReport } from '../core/gage-crossin
 import { type LngLat } from '../core/gage-geometry';
 import { type PlateParity } from '../core/ganjil-genap';
 import { BUFFER_METERS, CORRIDORS } from '../core/gage-corridors';
-import type { RunClock } from '../core/leg-timeline';
+import { WIB_OFFSET_MS, naiveLocal, type RunClock } from '../core/leg-timeline';
 import type { SharedScenario } from '../core/share-url';
 import { routeCoordinates } from '../map/route-layer';
 import { createRouteClient, installLastRequestHook, type RouteClient } from '../router/client';
 import { formatBytes, formatDuration, formatKilometers } from '../ui/format';
 import { useProcessLog } from './process-log';
+import { useView } from './view';
 
 export type OptionValue = number | boolean | string;
 
@@ -80,6 +81,16 @@ export interface RouteFailure {
 
 export type RouteStatus = 'idle' | 'routing' | 'done' | 'error' | 'cancelled';
 
+/** The controls a result was calculated for, so the UI can tell when the route on screen is stale. */
+export interface ResultInputs {
+  waypoints: Waypoint[];
+  profile: Profile;
+  timeMode: TimeMode;
+  departure: string;
+  options: Record<string, OptionValue>;
+  plateParity: PlateParity;
+}
+
 export interface ScenarioState {
   waypoints: Waypoint[];
   profile: Profile;
@@ -92,15 +103,21 @@ export interface ScenarioState {
   status: RouteStatus;
   error: RouteFailure | null;
   progress: SdkProgress | null;
-  /** The constraint plan the last `run()` sent, so the panel reports what was actually requested. */
+  /**
+   * The constraint plan of the route on screen, so the panel reports what that route requested.
+   * Saved together with `result`: a run that fails or is cancelled leaves the previous plan in place.
+   */
   gage: GagePlan | null;
   /** Corridors the returned route still runs through; null before the first route. */
   crossings: CrossingReport | null;
   /** The time control as it was when `result` was requested, so waypoint clocks match the route. */
   resultClock: RunClock | null;
+  /** What `result` was requested for; compared with the controls by {@link isResultStale}. */
+  resultFor: ResultInputs | null;
   /** A run asked for while another was in progress; it starts as soon as that one settles. */
   rerunQueued: boolean;
-  addWaypoint(point: Waypoint): void;
+  /** @returns False when the stop limit is reached and nothing was added. */
+  addWaypoint(point: Waypoint): boolean;
   /** Move one stop, e.g. after its marker was dragged. */
   moveWaypoint(index: number, point: Waypoint): void;
   removeWaypoint(index: number): void;
@@ -124,15 +141,64 @@ export interface ScenarioState {
   cancel(): void;
 }
 
-const MAX_WAYPOINTS = 25;
+export const MAX_WAYPOINTS = 25;
 
-/** `datetime-local` value for the next whole hour, in the browser's own timezone. */
+const sameStops = (a: Waypoint[], b: Waypoint[]) => a.length === b.length && a.every((point, index) => point.lat === b[index].lat && point.lng === b[index].lng);
+
+/**
+ * The shared options each control of `profile` can display: preferences 0 or 1, a checked box as
+ * `true`, a positive number.
+ */
+export function acceptedOptions(profile: Profile, options: Record<string, OptionValue>): Record<string, OptionValue> {
+  const accepted: Record<string, OptionValue> = {};
+  for (const control of PROFILE_OPTIONS[profile]) {
+    const value = options[control.key];
+    if (control.kind === 'preference' ? value === 0 || value === 1
+      : control.kind === 'boolean' ? value === true
+        : typeof value === 'number' && Number.isFinite(value) && value > 0) accepted[control.key] = value;
+  }
+  return accepted;
+}
+
+/** Same option values, whatever order they were set in. */
+function sameOptions(a: Record<string, OptionValue>, b: Record<string, OptionValue>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(key => Object.is(a[key], b[key]));
+}
+
+/** Whether the route on screen was calculated for the stops currently listed. */
+export function resultMatchesStops(state: Pick<ScenarioState, 'result' | 'resultFor' | 'waypoints'>): boolean {
+  return Boolean(state.result && state.resultFor && sameStops(state.resultFor.waypoints, state.waypoints));
+}
+
+/**
+ * Whether the route on screen no longer answers the controls: a stop, the profile, the time, an
+ * option or the plate parity changed after it was requested.
+ */
+export function isResultStale(state: Pick<ScenarioState, 'result' | 'resultFor' | 'waypoints' | 'profile' | 'timeMode' | 'departure' | 'options' | 'plateParity'>): boolean {
+  if (!state.result || !state.resultFor) return false;
+  const inputs = state.resultFor;
+  return !sameStops(inputs.waypoints, state.waypoints)
+    || inputs.profile !== state.profile
+    || inputs.timeMode !== state.timeMode
+    || (state.timeMode !== 'now' && inputs.departure !== state.departure)
+    || inputs.plateParity !== state.plateParity
+    || !sameOptions(inputs.options, state.options);
+}
+
+/** Everything a result carries, cleared together so nothing of an old route outlives it. */
+const NO_RESULT = { result: null, resultFor: null, resultClock: null, gage: null, crossings: null } as const;
+
+/**
+ * `datetime-local` value for the next whole hour, in WIB.
+ *
+ * The control is read as a WIB wall clock everywhere else (`wibInstant`, the ganjil-genap rule), so
+ * its default is too. Using the browser's zone made a Singapore or Tokyo visitor start one or two
+ * hours ahead of the Jakarta clock the rule then evaluated.
+ */
 export function defaultDeparture(now: Date = new Date()): string {
-  const next = new Date(now.getTime());
-  next.setMinutes(0, 0, 0);
-  next.setHours(next.getHours() + 1);
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}T${pad(next.getHours())}:${pad(next.getMinutes())}`;
+  const hour = 3600000;
+  return naiveLocal(Math.floor((now.getTime() + WIB_OFFSET_MS) / hour) * hour + hour);
 }
 
 /** Date part of a `datetime-local` value, so a preset keeps the day the user is looking at. */
@@ -155,8 +221,12 @@ export function toRouteFailure(error: unknown): RouteFailure {
 }
 
 /** The geometry the constraint is judged against: the last route if there is one, else the stops. */
-export function geometryForGage(state: Pick<ScenarioState, 'result' | 'waypoints'>): LngLat[] {
-  if (state.result) return routeCoordinates(state.result);
+export function geometryForGage(state: Pick<ScenarioState, 'result' | 'waypoints'> & Partial<Pick<ScenarioState, 'resultFor'>>): LngLat[] {
+  // A route calculated for other stops says nothing about where these stops will go: planning from
+  // it picked corridors near the old route (e.g. rings from central Jakarta for a trip that was
+  // moved to Bekasi). The old geometry is used only while it still belongs to the listed stops.
+  const current = state.resultFor === undefined || (state.resultFor !== null && sameStops(state.resultFor.waypoints, state.waypoints));
+  if (state.result && current) return routeCoordinates(state.result);
   return state.waypoints.map(point => [point.lng, point.lat] as LngLat);
 }
 
@@ -170,7 +240,7 @@ export function geometryForGage(state: Pick<ScenarioState, 'result' | 'waypoints
  *   is read only for a `now` scenario: a `depart`/`arrive` value that does not parse returns a
  *   refusal plan rather than a verdict at the host's current time.
  */
-export function gagePlanFrom(state: Pick<ScenarioState, 'plateParity' | 'profile' | 'timeMode' | 'departure' | 'result' | 'waypoints'>): GagePlan {
+export function gagePlanFrom(state: Pick<ScenarioState, 'plateParity' | 'profile' | 'timeMode' | 'departure' | 'result' | 'waypoints'> & Partial<Pick<ScenarioState, 'resultFor'>>): GagePlan {
   return planGageRequest({
     plateParity: state.plateParity,
     profile: state.profile,
@@ -190,6 +260,20 @@ installLastRequestHook(() => lastRequest);
 const MANIFEST_URL: string | undefined = import.meta.env.VITE_MANIFEST_URL;
 
 let client: RouteClient | undefined;
+/**
+ * Bumped by every run and by clearing the stops. A run applies its outcome only while it is still the
+ * latest: a route that finishes after the user cleared the list, or after a newer run started, must
+ * not paint itself back onto the map.
+ */
+let runGeneration = 0;
+
+/** Re-route after an edit to the stops, when the user asked for that and a route is on screen. */
+function autoRouteAfterEdit(): void {
+  const state = useScenario.getState();
+  if (!useView.getState().autoRoute || state.waypoints.length < 2) return;
+  if (!state.result && state.status !== 'routing') return;
+  state.requestRun();
+}
 /** Whether the session's startup measurements were logged already; they are read once. */
 let startupLogged = false;
 
@@ -224,26 +308,45 @@ export const useScenario = create<ScenarioState>((set, get) => ({
   gage: null,
   crossings: null,
   resultClock: null,
+  resultFor: null,
   rerunQueued: false,
 
   addWaypoint(point) {
     const { waypoints } = get();
-    if (waypoints.length >= MAX_WAYPOINTS) return;
+    if (waypoints.length >= MAX_WAYPOINTS) return false;
     set({ waypoints: [...waypoints, point] });
+    return true;
   },
   moveWaypoint(index, point) {
     const { waypoints } = get();
     if (index < 0 || index >= waypoints.length) return;
     set({ waypoints: waypoints.map((existing, position) => (position === index ? { ...existing, lng: point.lng, lat: point.lat } : existing)) });
+    autoRouteAfterEdit();
   },
   removeWaypoint(index) {
-    set({ waypoints: get().waypoints.filter((_, position) => position !== index) });
+    const waypoints = get().waypoints.filter((_, position) => position !== index);
+    if (waypoints.length >= 2) {
+      set({ waypoints });
+      autoRouteAfterEdit();
+      return;
+    }
+    // One stop cannot have a route: the old one goes, and so does any run still calculating it.
+    get().clearWaypoints();
+    set({ waypoints });
   },
   reverseWaypoints() {
     set({ waypoints: [...get().waypoints].reverse() });
+    autoRouteAfterEdit();
   },
   clearWaypoints() {
-    set({ waypoints: [] });
+    const routing = get().status === 'routing';
+    runGeneration++;
+    set({ waypoints: [], ...NO_RESULT, status: 'idle', error: null, progress: null, rerunQueued: false });
+    if (routing) {
+      useProcessLog.getState().push('warn', 'Titik dihapus saat rute berjalan: rute dibatalkan.');
+      useProcessLog.getState().endRun();
+      client?.cancel();
+    }
   },
   setProfile(profile) {
     // Options are per-profile: keep the ones the new profile accepts and drop the rest, so the
@@ -274,10 +377,12 @@ export const useScenario = create<ScenarioState>((set, get) => ({
     if (shared.departure) next.departure = shared.departure;
     if (shared.plateParity) next.plateParity = shared.plateParity;
     set(next);
-    // Through `setProfile`, so options the profile does not accept are dropped exactly as a click would.
-    if (shared.options) set({ options: { ...shared.options } });
-    if (shared.profile) get().setProfile(shared.profile);
-    else get().setProfile(get().profile);
+    // Only values a control can show: a link is hand-editable, and `hazmat:1` or `use_tolls:0.5`
+    // would otherwise be sent while the panel displays "Bawaan" or an empty box.
+    const profile = shared.profile ?? get().profile;
+    if (shared.options) set({ options: acceptedOptions(profile, shared.options) });
+    // Through `setProfile`, so the option set ends up exactly as a click on the profile would leave it.
+    get().setProfile(profile);
   },
   requestRun() {
     if (get().waypoints.length < 2) return;
@@ -311,7 +416,9 @@ export const useScenario = create<ScenarioState>((set, get) => ({
       return;
     }
     const clock: RunClock = { timeMode, departure, startedAt: new Date() };
-    set({ status: 'routing', error: null, progress: null, gage, rerunQueued: false });
+    const inputs: ResultInputs = { waypoints, profile, timeMode, departure, options, plateParity: get().plateParity };
+    const generation = ++runGeneration;
+    set({ status: 'routing', error: null, progress: null, rerunQueued: false });
     const request = buildRouteRequest({
       waypoints, profile, timeMode, departure, options,
       ...(gage.excludePolygons.length > 0 ? { excludePolygons: gage.excludePolygons } : {}),
@@ -327,6 +434,10 @@ export const useScenario = create<ScenarioState>((set, get) => ({
     ].join(' · '));
     try {
       const result = await active.route(request);
+      if (generation !== runGeneration) {
+        log('info', 'Hasil rute dibuang: titik berubah atau rute baru dimulai sebelum rute ini selesai.');
+        return;
+      }
       const crossings = findCorridorCrossings(routeCoordinates(result), CORRIDORS);
       const { summary } = result.native.trip;
       const { loader, native } = result.diagnostics;
@@ -334,7 +445,8 @@ export const useScenario = create<ScenarioState>((set, get) => ({
       log('info', `Loader: ${loader.tileDownloads} tile diunduh · ${loader.requests} fetch · ${formatBytes(loader.bytes)} · tunggu ${Math.round(loader.sequentialWaitMs).toLocaleString('id-ID')} ms · dedup ${loader.deduplicated} · retry ${loader.retries}`);
       log('info', `Cache tile ter-decode: ${result.diagnostics.decodedCacheHits} hit · ${formatBytes(native.decodedCacheBytes)} tertahan · heap WASM puncak ${formatBytes(native.wasmHeapCapacityHighWaterBytes)}`);
       if (crossings.count > 0) log('warn', `Ganjil-genap: geometri masih melintasi ${crossings.count} koridor: ${crossings.corridors.map(corridor => corridor.name).join(', ')}.`);
-      set({ result, status: 'done', error: null, progress: null, crossings, resultClock: clock });
+      useProcessLog.getState().setSession({ ready: true, decodedCacheBytes: native.decodedCacheBytes, heapHighWaterBytes: native.wasmHeapCapacityHighWaterBytes });
+      set({ result, gage, status: 'done', error: null, progress: null, crossings, resultClock: clock, resultFor: inputs });
       if (!startupLogged) {
         startupLogged = true;
         const startup = await active.startup();
@@ -345,11 +457,19 @@ export const useScenario = create<ScenarioState>((set, get) => ({
     } catch (error) {
       const failure = toRouteFailure(error);
       const cancelled = failure.code === 'CANCELLED';
-      log(cancelled ? 'warn' : 'error', `${failure.code}${failure.nativeCode === undefined ? '' : ` (native ${failure.nativeCode})`}: ${failure.message}`);
-      set({ status: cancelled ? 'cancelled' : 'error', error: failure, progress: null, crossings: null });
+      // Cancelling terminates the worker, and a runtime failure resets it: either way its cache is gone.
+      // A superseded run says nothing about the worker a newer run may already be using.
+      if (generation === runGeneration && ['RUNTIME', 'RESOURCE_LIMIT', 'WORKER_FAILED', 'TIMEOUT', 'CANCELLED'].includes(failure.code)) {
+        useProcessLog.getState().setSession({ ready: false, decodedCacheBytes: 0, heapHighWaterBytes: 0 });
+      }
+      // A cancel already logged itself; a superseded run's rejection is only noise.
+      if (generation === runGeneration) log(cancelled ? 'warn' : 'error', `${failure.code}${failure.nativeCode === undefined ? '' : ` (native ${failure.nativeCode})`}: ${failure.message}`);
+      // A run the user superseded (by clearing the stops) has nothing left to report on screen.
+      if (generation === runGeneration) set({ status: cancelled ? 'cancelled' : 'error', error: failure, progress: null, crossings: null });
     } finally {
-      processLog.endRun();
+      if (generation === runGeneration) processLog.endRun();
     }
+    if (generation !== runGeneration) return;
     if (get().rerunQueued && get().status !== 'cancelled') {
       set({ rerunQueued: false });
       void get().run();
@@ -357,7 +477,14 @@ export const useScenario = create<ScenarioState>((set, get) => ({
   },
   cancel() {
     if (get().status !== 'routing') return;
+    // The cancelled run is superseded here, so its rejection (or a startup error that lands after the
+    // click) cannot replace "Dibatalkan" with a failure the user did not wait for.
+    runGeneration++;
     set({ status: 'cancelled', error: { code: 'CANCELLED', message: 'Rute dibatalkan.' }, progress: null, rerunQueued: false });
+    const processLog = useProcessLog.getState();
+    processLog.push('warn', 'Dibatalkan oleh pengguna: worker dihentikan, cache tile dibuang.');
+    processLog.endRun();
+    processLog.setSession({ ready: false, decodedCacheBytes: 0, heapHighWaterBytes: 0 });
     client?.cancel();
   },
 }));

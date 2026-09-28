@@ -12,7 +12,11 @@ import type { TimeMode } from './request-builder';
  * Clock arithmetic is done on the naive wall-clock value the time control holds (`YYYY-MM-DDTHH:MM`,
  * "waktu lokal dataset"), never through the host's timezone: the value is read and written as if it
  * were UTC, which shifts nothing, so a Jakarta scenario opened in Tokyo still reads 07:00 at 07:00.
+ * A `now` run starts from the WIB wall clock, the same clock the ganjil-genap rule reads.
  */
+
+/** WIB is UTC+7 with no daylight saving. */
+export const WIB_OFFSET_MS = 7 * 3600000;
 
 /** One leg between waypoint `index` and waypoint `index + 1`. */
 export interface LegFigures {
@@ -78,9 +82,9 @@ export function naiveLocal(millis: number): string {
   return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}T${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`;
 }
 
-/** The host's wall clock as a naive `YYYY-MM-DDTHH:MM` value. */
-function hostLocal(at: Date): string {
-  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+/** An instant as the WIB wall clock, `YYYY-MM-DDTHH:MM`. */
+export function wibLocal(at: Date): string {
+  return naiveLocal(at.getTime() + WIB_OFFSET_MS);
 }
 
 /**
@@ -90,11 +94,11 @@ function hostLocal(at: Date): string {
  * @returns One entry per waypoint (legs + 1), or an empty list when the start cannot be read.
  * @remarks `depart` starts the clock at the control's value, `arrive` ends it there (so the first
  *   waypoint is the arrival minus the whole trip), and `now` starts it at the host's wall clock
- *   when the run began.
+ *   (WIB) when the run began.
  */
 export function waypointTimes(legs: LegFigures[], clock: RunClock): WaypointTime[] {
   const total = legs.reduce((sum, leg) => sum + leg.timeSeconds, 0);
-  const anchor = clock.timeMode === 'now' ? naiveMillis(hostLocal(clock.startedAt)) : naiveMillis(clock.departure);
+  const anchor = clock.timeMode === 'now' ? naiveMillis(wibLocal(clock.startedAt)) : naiveMillis(clock.departure);
   if (anchor === null) return [];
   // Seconds inside the host minute are kept for `now`, so a run at 07:00:50 does not read 07:00.
   const seconds = clock.timeMode === 'now' ? clock.startedAt.getSeconds() : 0;

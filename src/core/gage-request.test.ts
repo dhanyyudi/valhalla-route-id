@@ -32,6 +32,13 @@ function plan(overrides: Partial<Parameters<typeof planGageRequest>[0]> = {}) {
 }
 
 describe('wibInstant', () => {
+  it('refuses a calendar value that would roll over to another day', () => {
+    expect(wibInstant('2026-02-30T07:00')).toBeNull();
+    expect(wibInstant('2026-09-28T24:00')).toBeNull();
+    expect(wibInstant('2026-09-28T07:60')).toBeNull();
+    expect(wibInstant('2028-02-29T07:00')?.toISOString()).toBe('2028-02-29T00:00:00.000Z');
+  });
+
   it('reads the panel value as WIB wall clock, not as UTC', () => {
     expect(wibInstant('2026-09-28T07:00')?.toISOString()).toBe('2026-09-28T00:00:00.000Z');
     expect(wibInstant('2026-09-28 17:30')?.toISOString()).toBe('2026-09-28T10:30:00.000Z');

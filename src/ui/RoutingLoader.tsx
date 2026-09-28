@@ -3,6 +3,7 @@ import type { ProgressEvent as SdkProgress } from 'valhalla-browser';
 import { useProcessLog } from '../state/process-log';
 import { PROFILE_LABELS, useScenario } from '../state/scenario';
 import { formatDuration } from './format';
+import { useExplainer } from './WasmExplainer';
 
 /** The progress line's own wording; `e2e/*.spec.ts` reads it, including the ` · tile <id>` part. */
 export const PROGRESS_TEXT: Record<string, string> = {
@@ -55,6 +56,8 @@ export function RoutingLoader() {
   const seen = (step: (typeof STEPS)[number]) => step.phases.some(phase => run?.phases[phase] !== undefined);
   const phaseText = PROGRESS_TEXT[current ?? 'routing'] ?? 'Bekerja…';
   const seconds = Math.floor(elapsed / 1000);
+  // A cold session is loading the engine or reading the graph index: the slow, one-off part.
+  const cold = run?.phases['loading-runtime'] !== undefined || (run?.tiles ?? 0) > 0;
 
   return (
     <section
@@ -100,6 +103,14 @@ export function RoutingLoader() {
       <div className="nb-bar mt-3" aria-hidden="true"><span /></div>
 
       <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          data-testid="loader-why"
+          className={`nb-button px-2 py-1 text-xs ${cold ? 'bg-nb-cream' : ''}`}
+          onClick={() => useExplainer.getState().setOpen(true)}
+        >
+          {cold ? 'Kenapa lama?' : 'Cara kerja'}
+        </button>
         <button type="button" className="nb-button flex-1 px-2 py-1 text-xs" onClick={() => useProcessLog.getState().setOpen(true)}>
           Lihat log proses
         </button>

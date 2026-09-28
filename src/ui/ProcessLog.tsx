@@ -27,9 +27,12 @@ export function ProcessLog({ className = '' }: { className?: string }) {
   const list = useRef<HTMLOListElement>(null);
   const visible = showTiles ? entries : entries.filter(entry => entry.level !== 'tile');
 
+  // Keyed on the newest line, not the count: once the log is full the count stays at its cap and a
+  // length-keyed effect stopped following new lines.
+  const newest = visible.at(-1)?.id;
   useEffect(() => {
     if (follow && list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [visible.length, follow, open]);
+  }, [newest, follow, open]);
 
   return (
     <section data-testid="process-log" className={`nb-panel nb-log flex min-h-0 flex-col text-xs ${className}`}>

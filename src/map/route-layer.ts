@@ -33,6 +33,8 @@ const markers = new WeakMap<MapLibreMap, Marker[]>();
 const legLabels = new WeakMap<MapLibreMap, Marker[]>();
 /** The running animation's frame request per map, so a new route stops the old animation. */
 const animations = new WeakMap<MapLibreMap, number>();
+/** Maps whose route no longer answers the controls; their route is drawn faded. */
+const staleRoutes = new WeakSet<MapLibreMap>();
 
 /**
  * Decode one Valhalla polyline6 shape into `[lng, lat]` pairs.
@@ -232,8 +234,18 @@ export function drawRoute(map: MapLibreMap, result: RouteResult): number {
   return track.legs.reduce((sum, leg) => sum + leg.coordinates.length, 0);
 }
 
-/** Full route dimmed while the animation traces it, full strength otherwise. */
-function setRouteOpacity(map: MapLibreMap, opacity: number): void {
+/**
+ * Fade the route when it was calculated for other stops or controls than the ones listed, so an old
+ * route is never mistaken for the answer to the current scenario.
+ */
+export function setRouteStale(map: MapLibreMap, stale: boolean): void {
+  if (stale) staleRoutes.add(map); else staleRoutes.delete(map);
+  if (!animations.has(map)) setRouteOpacity(map, 1);
+}
+
+/** Full route dimmed while the animation traces it, full strength otherwise; a stale route is faded. */
+function setRouteOpacity(map: MapLibreMap, requested: number): void {
+  const opacity = staleRoutes.has(map) ? Math.min(requested, 0.35) : requested;
   if (map.getLayer(LINE)) map.setPaintProperty(LINE, 'line-opacity', opacity);
   if (map.getLayer(CASING)) map.setPaintProperty(CASING, 'line-opacity', 0.85 * Math.max(opacity, 0.4));
 }
@@ -367,6 +379,10 @@ export interface WaypointMarkerOptions {
  * @param options - Clock times, leg colouring and the drag/remove callbacks.
  */
 export function drawWaypoints(map: MapLibreMap, waypoints: Waypoint[], options: WaypointMarkerOptions = {}): void {
+  // A redraw while a marker is held would remove it from under the pointer: its `dragend` never
+  // fires and the stop snaps back. That happened whenever a route landed mid-drag (new clocks and
+  // colours). The drop itself changes the stops, which redraws everything a moment later.
+  if ((markers.get(map) ?? []).some(marker => marker.getElement().classList.contains('is-dragging'))) return;
   clearWaypoints(map);
   const last = waypoints.length - 1;
   const drawn = waypoints.map((point, index) => {

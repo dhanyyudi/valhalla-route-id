@@ -103,7 +103,13 @@ export function wibInstant(value: string): Date | null {
   if (!match) return null;
   const [year, month, day, hour, minute, second] = match.slice(1).map(part => Number(part ?? 0));
   const instant = new Date(Date.UTC(year, month - 1, day, hour - 7, minute, second));
-  return Number.isNaN(instant.getTime()) ? null : instant;
+  if (Number.isNaN(instant.getTime())) return null;
+  // `Date.UTC` rolls 2026-02-30 over to 2 March and 24:00 to the next day: the rule would then be
+  // judged for a day the box does not show, while the native request carries the raw string.
+  const wib = new Date(instant.getTime() + 7 * 3600000);
+  if (wib.getUTCFullYear() !== year || wib.getUTCMonth() !== month - 1 || wib.getUTCDate() !== day
+    || wib.getUTCHours() !== hour || wib.getUTCMinutes() !== minute) return null;
+  return instant;
 }
 
 /**

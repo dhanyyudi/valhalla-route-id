@@ -45,8 +45,9 @@ describe('waypointTimes', () => {
     expect(times.at(-1)?.local).toBe('2026-09-30T00:15');
   });
 
-  it('starts a now scenario at the host wall clock', () => {
-    const startedAt = new Date(2026, 8, 29, 17, 20, 0);
+  it('starts a now scenario at the WIB wall clock, whatever zone the browser is in', () => {
+    // 10:20 UTC is 17:20 WIB.
+    const startedAt = new Date(Date.UTC(2026, 8, 29, 10, 20, 0));
     expect(waypointTimes(legs, { timeMode: 'now', departure: '', startedAt }).map(time => time.clock)).toEqual(['17:20', '17:35', '18:05']);
   });
 

@@ -7,7 +7,8 @@ import type { PlateParity } from '../core/ganjil-genap';
 import { legFigures } from '../core/leg-timeline';
 import { encodeScenario } from '../core/share-url';
 import { legColor, routeTrack } from '../map/route-layer';
-import { PROFILE_LABELS, PROFILE_OPTIONS, SLOW_PROFILES, useScenario, withPresetHour, type OptionControl } from '../state/scenario';
+import { MAX_WAYPOINTS, PROFILE_LABELS, PROFILE_OPTIONS, SLOW_PROFILES, isResultStale, resultMatchesStops, useScenario, withPresetHour, type OptionControl } from '../state/scenario';
+import { useExplainer } from './WasmExplainer';
 import { formatDuration, formatKilometers, formatShortDuration, formatSpeed } from './format';
 import { copyText } from './Toast';
 import { useTimeline, type Timeline } from './useTimeline';
@@ -20,6 +21,21 @@ const TIME_MODES: Array<{ mode: TimeMode; label: string }> = [
   { mode: 'depart', label: 'Berangkat' },
   { mode: 'arrive', label: 'Tiba' },
 ];
+
+/** A counter that changes at every wall-clock minute while `active`. */
+function useMinuteTick(active: boolean): number {
+  const [minute, setMinute] = useState(() => Math.floor(Date.now() / 60000));
+  useEffect(() => {
+    if (!active) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(() => { setMinute(Math.floor(Date.now() / 60000)); schedule(); }, 60000 - (Date.now() % 60000) + 50);
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [active]);
+  return minute;
+}
 
 /** Elapsed whole seconds since `running` became true. */
 function useElapsed(running: boolean): number {
@@ -41,7 +57,8 @@ function useElapsed(running: boolean): number {
  * plus the run/cancel actions and the turn-by-turn list.
  */
 export function RoutePanel() {
-  const [collapsed, setCollapsed] = useState(false);
+  // On a phone the expanded panel covers nearly the whole map, so it starts folded there.
+  const [collapsed, setCollapsed] = useState(() => typeof matchMedia === 'function' && matchMedia('(max-width: 767px)').matches);
   const waypoints = useScenario(state => state.waypoints);
   const profile = useScenario(state => state.profile);
   const timeMode = useScenario(state => state.timeMode);
@@ -51,6 +68,7 @@ export function RoutePanel() {
   const result = useScenario(state => state.result);
   const elapsed = useElapsed(status === 'routing');
   const timeline = useTimeline();
+  const stale = useScenario(isResultStale);
 
   const slow = SLOW_PROFILES.includes(profile);
   const maneuvers = (result?.native.trip.legs ?? []).flatMap(leg => leg.maneuvers);
@@ -65,6 +83,14 @@ export function RoutePanel() {
         <div>
           <h1 className="nb-title text-lg">Valhalla Route ID</h1>
           <p className="text-xs opacity-70">Inspector rute Indonesia — Valhalla berjalan di browser.</p>
+          <button
+            type="button"
+            data-testid="open-explainer"
+            className="mt-1 text-xs font-bold underline decoration-2 underline-offset-2 hover:text-nb-terracotta"
+            onClick={() => useExplainer.getState().setOpen(true)}
+          >
+            ⓘ Apa itu Valhalla WASM &amp; kenapa rute pertama lama?
+          </button>
         </div>
         <button
           type="button"
@@ -105,6 +131,19 @@ export function RoutePanel() {
           {summary ? (
             <section className="mt-3 border-t-3 border-nb-black pt-2">
               <h2 className="nb-title text-sm">Hasil</h2>
+              {stale ? (
+                <div data-testid="result-stale" role="status" className="mt-1 border-3 border-nb-black bg-nb-yellow p-2 text-xs font-bold">
+                  Rute di peta dihitung untuk titik atau pengaturan sebelumnya, jadi angkanya belum mengikuti perubahan terakhir.
+                  <button
+                    type="button"
+                    className="nb-button mt-1 block px-2 py-0.5 text-xs"
+                    disabled={waypoints.length < 2 || status === 'routing'}
+                    onClick={() => void useScenario.getState().run()}
+                  >
+                    Hitung ulang sekarang
+                  </button>
+                </div>
+              ) : null}
               <p data-testid="result-summary">
                 {formatKilometers(summary.length)} · {formatDuration(summary.time)} · biaya {Math.round(Number(summary.cost ?? 0))}
               </p>
@@ -175,9 +214,9 @@ function Waypoints() {
   const [message, setMessage] = useState<string | null>(null);
   const waypoints = useScenario(state => state.waypoints);
   const timeline = useTimeline();
-  const resultStops = useScenario(state => (state.result ? state.result.native.trip.legs.length + 1 : 0));
-  // Clocks belong to the route on screen: once a stop is added or removed they no longer line up.
-  const times = timeline && resultStops === waypoints.length ? timeline.times : [];
+  const stopsMatch = useScenario(resultMatchesStops);
+  // Clocks belong to the route on screen: once a stop is added, moved or removed they no longer apply.
+  const times = timeline && stopsMatch ? timeline.times : [];
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -186,7 +225,10 @@ function Waypoints() {
       setMessage(parsed.message);
       return;
     }
-    useScenario.getState().addWaypoint(parsed.point);
+    if (!useScenario.getState().addWaypoint(parsed.point)) {
+      setMessage(`Maksimal ${MAX_WAYPOINTS} titik per rute — hapus satu titik dulu.`);
+      return;
+    }
     setText('');
     setMessage(null);
   };
@@ -369,9 +411,12 @@ function GanjilGenap() {
   // updates the verdict immediately. `gagePlan()` reads `result` and `waypoints` through the store,
   // so both are dependencies: without `waypoints` the panel kept saying "Semua titik berada di luar
   // area Jakarta" while a Jakarta stop was being added, before the first route existed.
+  // A "Sekarang" verdict is a function of the wall clock, so it has to move with it: without the
+  // tick the panel kept "Tidak berlaku · 05:58 WIB" past 06:00 while `run()` sent the rings.
+  const minute = useMinuteTick(timeMode === 'now' && plateParity !== 'off');
   const plan = useMemo(
     () => useScenario.getState().gagePlan(),
-    [plateParity, profile, timeMode, departure, waypoints, result],
+    [plateParity, profile, timeMode, departure, waypoints, result, minute],
   );
 
   // Distinct corridors the request asked to avoid — `excluded` and `partial` never name the same

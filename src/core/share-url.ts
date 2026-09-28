@@ -1,3 +1,4 @@
+import { wibInstant } from './gage-request';
 import type { PlateParity } from './ganjil-genap';
 import type { Profile, TimeMode, Waypoint } from './request-builder';
 
@@ -76,7 +77,8 @@ export function decodeScenario(search: string): Partial<SharedScenario> {
     // A depart/arrive mode without a readable time would only be refused at run time: keep the
     // mode only when its time came with it.
     if (time === 'now') shared.timeMode = 'now';
-    else if (at && DEPARTURE.test(at)) {
+    // `wibInstant` also refuses a date that does not exist (2026-02-30), which the regex would pass.
+    else if (at && DEPARTURE.test(at) && wibInstant(at)) {
       shared.timeMode = time;
       shared.departure = at;
     }

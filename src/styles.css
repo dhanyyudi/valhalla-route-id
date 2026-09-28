@@ -204,7 +204,7 @@ html, body, #root { height: 100%; margin: 0; background: var(--color-nb-cream); 
 
 /* MapLibre's bottom controls (scale, attribution) sit above the status bar instead of under it. */
 .maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left { bottom: 4.5rem; }
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
   .maplibregl-ctrl-bottom-right { right: 25rem; }
   .maplibregl-ctrl-top-right { right: 25rem; }
 }
