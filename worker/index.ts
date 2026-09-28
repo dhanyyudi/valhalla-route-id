@@ -228,7 +228,7 @@ export default {
     if (!url.pathname.startsWith(PREFIX)) return env.ASSETS.fetch(request);
     if (request.method === 'OPTIONS') return preflight(request);
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return problem('Method not allowed.', 405, { Allow: 'GET, HEAD' });
+      return problem('Method not allowed.', 405, { Allow: 'GET, HEAD, OPTIONS' });
     }
 
     const key = objectKey(url.pathname);

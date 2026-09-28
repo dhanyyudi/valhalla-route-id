@@ -72,7 +72,10 @@ jobs:
 
   deploy:
     needs: verify
-    if: github.ref == 'refs/heads/main'
+    # Skipped, not failed, until the repository variable PROD_URL (the Worker's origin, read by
+    # the acceptance run) exists. Deploying also needs the repository secrets
+    # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID: set all three before enabling this job.
+    if: github.ref == 'refs/heads/main' && vars.PROD_URL != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
