@@ -86,6 +86,31 @@ Copied: `packages/valhalla-core`, `packages/valhalla-browser`,
    `polygons: true`, largest band first, `LineString` without it), `optimized_route` returns a
    `trip` with one location per stop and `locations - 1` legs, and `matrix` returns
    `sources_to_targets` with `algorithm: "costmatrix"`, `units: "kilometers"` and a zero diagonal.
+9. `tools/publish/` — the published release carries **three** objects, not 5,274, and its delivery
+   manifest is built by `tools/publish/manifest-etags.mjs` instead of `pnpm run data:etags`.
+   Upstream's `scripts/dataset-etags.js` HEADs the archive *and every tile*, which is right when
+   the tiles are published objects and wrong here: this application uses the SDK's default
+   indexed-tar transport, so tile bytes are read as ranges inside `graph.tar`
+   (`packages/valhalla-core/src/loader.ts` passes the archive's validator for an indexed-tar read
+   and a tile's only for an individual-tile read), and 5,271 tile objects would be published,
+   paid for and HEADed to prove nothing. The scoped script performs exactly the same checks on
+   the two objects that are published — status `200`, the released `Content-Length`, no
+   content encoding other than `identity`, a strong quoted ETag — and writes those observed
+   ETags into `build/hosting/<release>-manifest.json`. Tile entries keep the validator the loader
+   derives for them from their released `sha256`, and no tile object is uploaded.
+   Two further consequences: the R2 keys are `<release>/<object>` and not
+   `datasets/<release>/<object>`, because the Worker strips the `/datasets/` URL prefix before it
+   looks the object up (`worker/index.ts`), and Cloudflare's edge compresses the JSON metadata for
+   a client that advertises an encoding and weakens that representation's ETag, so the delivery
+   manifest records the validator of the stored object (asked for with `Accept-Encoding: identity`)
+   — the loader checks the config by `config.sha256`, never by that ETag. `tools/publish/verify-deployed.mjs`
+   is the other half: it HEADs the deployed archive, fetches ranges at large offsets and compares
+   them with the released file byte for byte, then routes a real request through the SDK against
+   the deployed manifest URL.
+10. `tools/smoke/tools-smoke.test.ts` again, one line — the port is read from
+   `process.env.VALHALLA_TEST_PORT` (default 8790, upstream's fixed value) because 8790 is also the
+   port `tools/verify/compare.mjs` serves the Indonesia release on, so `pnpm test` could not bind
+   while a corpus run was in flight. `VALIDHALLA_TEST_PORT=8791 pnpm test` runs both side by side.
 
 ## Rebasing on a newer upstream release
 
