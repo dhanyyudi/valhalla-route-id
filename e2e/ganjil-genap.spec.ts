@@ -12,8 +12,10 @@ import path from 'node:path';
  *    The panel must report `restricted`, the request the app actually built must carry
  *    `exclude_polygons`, and the crossing report must appear.
  * 2. **control, Nonaktif** — the same pair with the constraint off. The request must carry no
- *    `exclude_polygons` at all, and the two runs' distance/duration/geometry are compared and
- *    reported whichever way they land.
+ *    `exclude_polygons` at all, and the two runs' distance/duration/cost/geometry are compared and
+ *    reported whichever way they land. Each run's *own* result is awaited before it is read (see
+ *    `route()`): the status bar keeps the previous result while a route runs, so a helper that only
+ *    looks for a non-empty distance compares a run against itself.
  *
  * Point it somewhere else with `E2E_BASE_URL` (for example a local `pnpm preview`).
  */
@@ -42,6 +44,7 @@ interface RunEvidence {
   crossing: string;
   distance: string;
   duration: string;
+  cost: string;
   coordinates: number;
   gageRings: string;
   gageActive: string;
@@ -50,28 +53,52 @@ interface RunEvidence {
   excludeRings: number;
 }
 
-/** Press "Hitung rute" and wait for the status bar to carry a distance or the panel to report one. */
-async function route(page: import('@playwright/test').Page, label: string): Promise<void> {
+/**
+ * Press "Hitung rute" and wait for *this* run's result.
+ *
+ * Reading `status-distance` straight after the click is not enough: the store keeps the previous
+ * `result` while a route runs, so the readout still carries the last run's numbers and a second run
+ * in the same page would be compared against itself. `window.valhallaLastRequest` is written inside
+ * `run()` before the route is awaited, so the request is the one signal a previous result cannot
+ * fake; the run is over once the progress line is gone and the button is back.
+ *
+ * @param page - The browser page.
+ * @param label - Names the run in the log.
+ * @param expectRings - Whether this run's request must carry `exclude_polygons`.
+ */
+async function route(page: import('@playwright/test').Page, label: string, expectRings: boolean): Promise<void> {
   const started = Date.now();
   await page.getByTestId('run').click();
   const deadline = Date.now() + ROUTE_BUDGET_MS;
+  let startedThisRun = false;
   while (Date.now() < deadline) {
     if (await page.getByTestId('panel-error').isVisible().catch(() => false)) {
       const failure = (await page.getByTestId('panel-error').textContent()) ?? '';
       throw new Error(`${label}: the app reported a routing failure: ${failure}`);
     }
+    const request = await page.evaluate(() => (window as unknown as { valhallaLastRequest?: () => unknown }).valhallaLastRequest?.() ?? null) as RunEvidence['request'] | null;
+    const rings = Array.isArray(request?.exclude_polygons) ? request.exclude_polygons.length : 0;
+    if (expectRings ? rings > 0 : request !== null && request.exclude_polygons === undefined) startedThisRun = true;
+    const routing = await page.getByTestId('progress').isVisible().catch(() => false);
+    const busy = await page.getByTestId('run').isDisabled().catch(() => true);
     const distance = ((await page.getByTestId('status-distance').textContent()) ?? '').trim();
-    if (distance !== '—' && distance !== '') {
+    if (startedThisRun && !routing && !busy && distance !== '—' && distance !== '') {
       console.log(`E2E_ROUTE ${label} ${Math.round((Date.now() - started) / 1000)}s ${distance}`);
       return;
     }
-    await page.waitForTimeout(2_000);
+    await page.waitForTimeout(500);
   }
   throw new Error(`${label}: no route after ${Math.round((Date.now() - started) / 1000)} s`);
 }
 
 async function readRun(page: import('@playwright/test').Page, label: string): Promise<RunEvidence> {
   const text = async (testId: string) => ((await page.getByTestId(testId).textContent()) ?? '').trim();
+  // The sent line exists only when the run carried rings, so the Nonaktif read has to tolerate its
+  // absence: a plain `textContent()` would wait for it until the test times out.
+  const optionalText = async (testId: string) => {
+    const locator = page.getByTestId(testId);
+    return (await locator.count()) > 0 ? ((await locator.textContent()) ?? '').trim() : '';
+  };
   const request = await page.evaluate(() => (window as unknown as { valhallaLastRequest?: () => unknown }).valhallaLastRequest?.() ?? null) as RunEvidence['request'] | null;
   const container = page.getByTestId('map');
   const polygons = (request?.exclude_polygons ?? []) as number[][][];
@@ -80,10 +107,11 @@ async function readRun(page: import('@playwright/test').Page, label: string): Pr
     gageStatus: await text('gage-status'),
     gageReason: await text('gage-reason'),
     gageRequest: await text('gage-request'),
-    gageSent: await text('gage-sent'),
-    crossing: await text('gage-crossing'),
+    gageSent: await optionalText('gage-sent'),
+    crossing: await optionalText('gage-crossing'),
     distance: await text('status-distance'),
     duration: await text('status-duration'),
+    cost: await text('status-cost'),
     coordinates: Number(await container.getAttribute('data-route-coordinates')),
     gageRings: (await container.getAttribute('data-gage-rings')) ?? '',
     gageActive: (await container.getAttribute('data-gage-active')) ?? '',
@@ -140,7 +168,7 @@ async function restrictedThenControl(
   // The estimate is live before the route runs: the panel already says what the request will carry.
   await expect(page.getByTestId('gage-request')).toContainText('exclude_polygons');
 
-  await route(page, `${label}-restricted`);
+  await route(page, `${label}-restricted`, true);
   const restricted = await readRun(page, `${label}-restricted`);
 
   // The request the app actually handed the SDK — read from the app, not reconstructed here.
@@ -171,7 +199,7 @@ async function restrictedThenControl(
   await page.getByTestId('parity-off').click();
   await expect(page.getByTestId('gage-status')).toContainText('Tidak berlaku');
   await expect(page.getByTestId('gage-request')).toContainText('tidak membawa exclude_polygons');
-  await route(page, `${label}-nonaktif`);
+  await route(page, `${label}-nonaktif`, false);
   const control = await readRun(page, `${label}-nonaktif`);
 
   expect(control.excludePolygons).toBe(0);
@@ -182,8 +210,13 @@ async function restrictedThenControl(
   await page.screenshot({ path: testInfo.outputPath(`${label}-nonaktif.png`) });
   console.log(`E2E_RESULT ${JSON.stringify(control)}`);
 
+  // Whether the two runs came back the same, measured over every observable the app exposes: the
+  // decoded point count, the distance, the duration and the costing's own `cost`. Equal values are
+  // strong evidence of an identical polyline, not proof of one — the app does not expose the decoded
+  // geometry to the page, so this is a comparison of scalars and the report says so.
   const geometryIdentical = restricted.coordinates === control.coordinates
-    && restricted.distance === control.distance && restricted.duration === control.duration;
+    && restricted.distance === control.distance && restricted.duration === control.duration
+    && restricted.cost === control.cost;
   const evidence = {
     baseUrl: BASE_URL,
     pair: points,
@@ -233,17 +266,13 @@ test('ganjil-genap: the Sudirman pair shows what the browser can and cannot prov
   // What this pair cannot prove, measured rather than asserted: repeating the *identical* request in
   // one session makes the browser runtime answer with different routes, so a single
   // restricted-versus-control pair cannot attribute a difference to the exclusion. The three runs
-  // below are that measurement — same scenario, same request, three answers — and the Node adapter on
-  // the same release and the same WASM binary answers 4.695 km for the excluded request every time
-  // (see tools/smoke/gage-engine.test.ts, where the exclusion itself is proven to work).
+  // below are that measurement — the scenario is still Nonaktif from the control above, so all three
+  // send the same request and each one's own result is awaited before it is read.
   const outcomes: string[] = [];
   for (let index = 1; index <= 3; index += 1) {
-    await route(page, `sudirman-repeat-${index}`);
+    await route(page, `sudirman-repeat-${index}`, false);
     const repeat = await readRun(page, `sudirman-repeat-${index}`);
     outcomes.push(`${repeat.distance}/${repeat.coordinates}`);
-    // The status bar keeps the previous value until the next result lands, so wait for the route
-    // button to come back before the next click reads it.
-    await page.waitForTimeout(1_500);
   }
   const distinct = [...new Set(outcomes)];
   console.log(`E2E_SUDIRMAN identical=${geometryIdentical} restricted=${restricted.distance} control=${control.distance} ` +
